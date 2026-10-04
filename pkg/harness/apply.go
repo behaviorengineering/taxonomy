@@ -40,10 +40,10 @@ func Apply(vocab catalog.Vocabulary, res Result) (catalog.Vocabulary, error) {
 			break
 		}
 		if !updated {
-			return catalog.Vocabulary{}, fmt.Errorf("harness.Apply: leaf %q not found", leafID)
+			return catalog.Vocabulary{}, newErr("Apply", CodeInvalidDraft, fmt.Sprintf("leaf %q not found", leafID), nil)
 		}
 	default:
-		return catalog.Vocabulary{}, fmt.Errorf("harness.Apply: unsupported draft kind %q", d.Kind)
+		return catalog.Vocabulary{}, newErr("Apply", CodeInvalidDraft, fmt.Sprintf("unsupported draft kind %q", d.Kind), nil)
 	}
 	return out, nil
 }

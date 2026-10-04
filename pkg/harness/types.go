@@ -7,12 +7,12 @@ import (
 )
 
 const (
-	ChoiceSkip         = "skip"
-	ChoicePrefixUse    = "use:"
-	ChoiceAcceptDraft  = "accept_draft"
-	ChoiceReject       = "reject"
-	DraftKindNewLeaf   = "new_leaf"
-	DraftKindAlias     = "alias"
+	ChoiceSkip        = "skip"
+	ChoicePrefixUse   = "use:"
+	ChoiceAcceptDraft = "accept_draft"
+	ChoiceReject      = "reject"
+	DraftKindNewLeaf  = "new_leaf"
+	DraftKindAlias    = "alias"
 )
 
 // PackedOption is one closed choice for Judge seats.

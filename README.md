@@ -12,8 +12,8 @@ go get github.com/behaviorengineering/taxonomy@v0.1.0
 
 ## Packages
 
-- `pkg/catalog` — parse/merge/build YAML vocabularies, resolve leaf assignments, tree APIs
-- `pkg/harness` — `CreateHarness`, `Operate`, `Apply` with mandatory Judge + Author seats
+- `pkg/catalog`: parse/merge/build YAML vocabularies, resolve leaf assignments, tree APIs
+- `pkg/harness`: `CreateHarness`, `Operate`, `Apply` with mandatory Judge + Author seats
 
 ## Naming recommendations (host-driven)
 

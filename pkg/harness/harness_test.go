@@ -157,3 +157,55 @@ func TestOperate_skipRejectDraft(t *testing.T) {
 		t.Fatal("expected rejected draft")
 	}
 }
+
+func TestOperate_emptyLeafDescription(t *testing.T) {
+	h, err := CreateHarness(Config{Judge: &fakeJudge{}, Author: &fakeAuthor{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
+		ID: "demo",
+		Terms: []catalog.Term{
+			{ID: "branch", Label: "Branch", Description: "branch desc"},
+			{ID: "leaf-a", Label: "Leaf A", Parent: "branch"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.Operate(ctxWithDeadline(t), Op{
+		WorldContext: "brief",
+		Text:         "text",
+		Catalog:      cat,
+	})
+	if CodeOf(err) != CodeEmptyDescription {
+		t.Fatalf("expected empty description: %v", err)
+	}
+}
+
+func TestOperate_collidingNewLeaf(t *testing.T) {
+	h, err := CreateHarness(Config{
+		Judge: &fakeJudge{
+			choices: []string{ChoiceSkip, ChoiceAcceptDraft},
+			scores:  []float64{0.9, 0.95},
+		},
+		Author: &fakeAuthor{draft: DraftOut{
+			Kind:        DraftKindNewLeaf,
+			ID:          "leaf-a",
+			Parent:      "branch",
+			Label:       "Dup",
+			Description: "collision",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.Operate(ctxWithDeadline(t), Op{
+		WorldContext: "brief",
+		Text:         "text",
+		Catalog:      testCatalog(t),
+	})
+	if CodeOf(err) != CodeInvalidDraft {
+		t.Fatalf("expected invalid draft: %v", err)
+	}
+}
