@@ -9,15 +9,15 @@ import (
 type Code string
 
 const (
-	CodeNoDeadline      Code = "no_deadline"
-	CodeWorldContext    Code = "world_context_required"
-	CodeEmptyText       Code = "text_required"
-	CodeNilCatalog      Code = "catalog_required"
+	CodeNoDeadline       Code = "no_deadline"
+	CodeWorldContext     Code = "world_context_required"
+	CodeEmptyText        Code = "text_required"
+	CodeNilCatalog       Code = "catalog_required"
 	CodeEmptyDescription Code = "empty_description"
-	CodeUnknownChoice   Code = "unknown_choice"
-	CodeInvalidScore    Code = "invalid_score"
-	CodeInvalidDraft    Code = "invalid_draft"
-	CodeConfig          Code = "config"
+	CodeUnknownChoice    Code = "unknown_choice"
+	CodeInvalidScore     Code = "invalid_score"
+	CodeInvalidDraft     Code = "invalid_draft"
+	CodeConfig           Code = "config"
 )
 
 // Error is a typed harness failure.

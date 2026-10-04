@@ -1,4 +1,4 @@
-# BOOTSTRAP — taxonomy ai-copilots
+# BOOTSTRAP: taxonomy ai-copilots
 
 **Module path:** `github.com/behaviorengineering/taxonomy`
 
