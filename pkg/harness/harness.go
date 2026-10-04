@@ -9,6 +9,9 @@ import (
 	"github.com/behaviorengineering/taxonomy/pkg/catalog"
 )
 
+// hopCapForTest overrides the Operate hop cap when non-zero (tests only).
+var hopCapForTest int
+
 // Config wires mandatory seats for Operate.
 type Config struct {
 	Judge         Judge
@@ -38,7 +41,7 @@ func CreateHarness(cfg Config) (*Harness, error) {
 	return &Harness{judge: cfg.Judge, author: cfg.Author, minJudgeScore: min}, nil
 }
 
-// Operate classifies text against one merged catalog inside the game in play.
+// Operate classifies text by walking the catalog tree (children per hop).
 func (h *Harness) Operate(ctx context.Context, op Op) (Result, error) {
 	if h == nil {
 		return Result{}, newErr("Operate", CodeConfig, "harness is nil", nil)
@@ -57,57 +60,93 @@ func (h *Harness) Operate(ctx context.Context, op Op) (Result, error) {
 	if op.Catalog == nil {
 		return Result{}, newErr("Operate", CodeNilCatalog, "Catalog required", nil)
 	}
-
-	options, err := packLeafOptions(op.Catalog)
-	if err != nil {
+	if err := preflightCatalog(op.Catalog); err != nil {
 		return Result{}, err
 	}
-	choiceSet := map[string]struct{}{ChoiceSkip: {}}
-	for _, o := range options {
-		choiceSet[o.Choice] = struct{}{}
-	}
 
-	decideIn := DecideIn{WorldContext: world, Text: text, Options: options}
-	decideOut, err := h.judge.Decide(ctx, decideIn)
-	if err != nil {
-		return Result{}, newErr("Operate", CodeConfig, "judge", err)
+	cap := len(op.Catalog.ByID) + 1
+	if hopCapForTest > 0 {
+		cap = hopCapForTest
 	}
-	if math.IsNaN(decideOut.Score) || math.IsInf(decideOut.Score, 0) {
-		return Result{}, newErr("Operate", CodeInvalidScore, "judge score must be finite", nil)
-	}
-	if _, ok := choiceSet[decideOut.Choice]; !ok {
-		return Result{}, newErr("Operate", CodeUnknownChoice, fmt.Sprintf("choice %q not in packed set", decideOut.Choice), nil)
-	}
+	parentID := ""
+	var path []string
+	hops := 0
+	lastScore := 0.0
 
-	res := Result{JudgeScore: decideOut.Score}
-	if strings.HasPrefix(decideOut.Choice, ChoicePrefixUse) && decideOut.Score >= h.minJudgeScore {
-		leafID := strings.TrimPrefix(decideOut.Choice, ChoicePrefixUse)
-		rt, ok := op.Catalog.Lookup(leafID)
-		if !ok || !rt.Leaf {
-			return Result{}, newErr("Operate", CodeUnknownChoice, fmt.Sprintf("leaf %q missing from catalog", leafID), nil)
+	for {
+		hops++
+		if hops > cap {
+			return Result{}, newErr("Operate", CodeHopLimit, "hop cap exceeded", nil)
 		}
-		res.Assigned = []catalog.Assignment{{
-			Vocab:  op.Catalog.Vocab.ID,
-			TermID: rt.ID,
-			Label:  rt.Label,
-		}}
-		return res, nil
-	}
+		if err := ctx.Err(); err != nil {
+			return Result{}, newErr("Operate", CodeConfig, "context", err)
+		}
 
-	reason := "skip"
-	if decideOut.Choice != ChoiceSkip {
-		reason = fmt.Sprintf("low_score:%.3f", decideOut.Score)
+		options, choiceSet, err := packChildren(op.Catalog, parentID)
+		if err != nil {
+			return Result{}, err
+		}
+		if len(options) == 1 && options[0].Choice == ChoiceSkip {
+			return Result{}, newErr("Operate", CodeConfig, "no packable children", nil)
+		}
+
+		decideOut, err := h.judge.Decide(ctx, DecideIn{WorldContext: world, Text: text, Options: options})
+		if err != nil {
+			return Result{}, newErr("Operate", CodeJudge, "judge", err)
+		}
+		if math.IsNaN(decideOut.Score) || math.IsInf(decideOut.Score, 0) {
+			return Result{}, newErr("Operate", CodeInvalidScore, "judge score must be finite", nil)
+		}
+		if _, ok := choiceSet[decideOut.Choice]; !ok {
+			return Result{}, newErr("Operate", CodeUnknownChoice, fmt.Sprintf("choice %q not in packed set", decideOut.Choice), nil)
+		}
+		lastScore = decideOut.Score
+
+		if strings.HasPrefix(decideOut.Choice, ChoicePrefixUse) && decideOut.Score >= h.minJudgeScore {
+			id := strings.TrimPrefix(decideOut.Choice, ChoicePrefixUse)
+			rt, ok := op.Catalog.Lookup(id)
+			if !ok {
+				return Result{}, newErr("Operate", CodeUnknownChoice, fmt.Sprintf("term %q missing from catalog", id), nil)
+			}
+			path = append(path, rt.ID)
+			if isAssignableLeaf(op.Catalog, rt) {
+				assignRT, ok := op.Catalog.PreferLeaf(rt.ID)
+				if !ok || !isAssignableLeaf(op.Catalog, assignRT) {
+					return Result{}, newErr("Operate", CodeUnknownChoice, fmt.Sprintf("leaf %q not assignable", id), nil)
+				}
+				return Result{
+					Assigned: []catalog.Assignment{{
+						Vocab:  op.Catalog.Vocab.ID,
+						TermID: assignRT.ID,
+						Label:  assignRT.Label,
+					}},
+					JudgeScore: lastScore,
+					Path:       path,
+				}, nil
+			}
+			parentID = rt.ID
+			continue
+		}
+
+		reason := "skip"
+		if decideOut.Choice != ChoiceSkip {
+			reason = fmt.Sprintf("low_score:%.3f", decideOut.Score)
+		}
+		return h.authorAndGate(ctx, op.Catalog, world, text, parentID, reason, lastScore, path)
 	}
-	parents := packParentOptions(op.Catalog)
+}
+
+func (h *Harness) authorAndGate(ctx context.Context, cat *catalog.Catalog, world, text, parentID, reason string, judgeScore float64, path []string) (Result, error) {
+	parents := packAuthorParents(cat, parentID)
 	draftIn := DraftIn{WorldContext: world, Text: text, Parents: parents, Reason: reason}
 	draftOut, err := h.author.Draft(ctx, draftIn)
 	if err != nil {
-		return Result{}, newErr("Operate", CodeConfig, "author", err)
+		return Result{}, newErr("Operate", CodeAuthor, "author", err)
 	}
-	if err := validateDraft(op.Catalog, draftOut); err != nil {
+	if err := validateDraft(cat, draftOut); err != nil {
 		return Result{}, err
 	}
-	res.Draft = &draftOut
+	res := Result{Draft: &draftOut, JudgeScore: judgeScore, Path: path}
 
 	gateOptions := packGateOptions(draftOut)
 	gateOut, err := h.judge.Decide(ctx, DecideIn{
@@ -116,7 +155,7 @@ func (h *Harness) Operate(ctx context.Context, op Op) (Result, error) {
 		Options:      gateOptions,
 	})
 	if err != nil {
-		return Result{}, newErr("Operate", CodeConfig, "gate", err)
+		return Result{}, newErr("Operate", CodeGate, "gate", err)
 	}
 	if math.IsNaN(gateOut.Score) || math.IsInf(gateOut.Score, 0) {
 		return Result{}, newErr("Operate", CodeInvalidScore, "gate score must be finite", nil)
@@ -129,17 +168,17 @@ func (h *Harness) Operate(ctx context.Context, op Op) (Result, error) {
 	switch draftOut.Kind {
 	case DraftKindNewLeaf:
 		res.Assigned = []catalog.Assignment{{
-			Vocab:  op.Catalog.Vocab.ID,
+			Vocab:  cat.Vocab.ID,
 			TermID: strings.TrimSpace(draftOut.ID),
 			Label:  strings.TrimSpace(draftOut.Label),
 		}}
 	case DraftKindAlias:
-		rt, ok := op.Catalog.Lookup(draftOut.LeafID)
-		if !ok || !rt.Leaf {
+		rt, ok := cat.Lookup(draftOut.LeafID)
+		if !ok || !isAssignableLeaf(cat, rt) {
 			return Result{}, newErr("Operate", CodeInvalidDraft, "alias leaf missing", nil)
 		}
 		res.Assigned = []catalog.Assignment{{
-			Vocab:  op.Catalog.Vocab.ID,
+			Vocab:  cat.Vocab.ID,
 			TermID: rt.ID,
 			Label:  rt.Label,
 			Source: draftOut.Alias,
@@ -148,42 +187,110 @@ func (h *Harness) Operate(ctx context.Context, op Op) (Result, error) {
 	return res, nil
 }
 
-func requireDeadline(ctx context.Context) error {
-	if ctx == nil {
-		return newErr("Operate", CodeNoDeadline, "context required", nil)
+func preflightCatalog(cat *catalog.Catalog) error {
+	if len(cat.Roots) == 0 {
+		return newErr("Operate", CodeConfig, "catalog has no roots", nil)
 	}
-	if _, ok := ctx.Deadline(); !ok {
-		return newErr("Operate", CodeNoDeadline, "context must have a deadline", nil)
+	for _, rt := range cat.ByID {
+		if rt.Status == catalog.StatusDeprecated {
+			continue
+		}
+		if strings.TrimSpace(rt.Description) == "" {
+			return newErr("Operate", CodeEmptyDescription, fmt.Sprintf("term %q missing description", rt.ID), nil)
+		}
 	}
 	return nil
 }
 
-func packLeafOptions(cat *catalog.Catalog) ([]PackedOption, error) {
-	var out []PackedOption
-	for _, rt := range cat.LeafTerms() {
-		if strings.TrimSpace(rt.Description) == "" {
-			return nil, newErr("Operate", CodeEmptyDescription, fmt.Sprintf("leaf %q missing description", rt.ID), nil)
+func activeChildIDs(cat *catalog.Catalog, parentID string) []string {
+	var ids []string
+	if parentID == "" {
+		for _, id := range cat.Roots {
+			rt := cat.ByID[id]
+			if rt == nil || rt.Status == catalog.StatusDeprecated {
+				continue
+			}
+			ids = append(ids, id)
 		}
-		out = append(out, PackedOption{
+		return ids
+	}
+	parent := cat.ByID[parentID]
+	if parent == nil {
+		return nil
+	}
+	for _, childID := range parent.Children {
+		rt := cat.ByID[childID]
+		if rt == nil || rt.Status == catalog.StatusDeprecated {
+			continue
+		}
+		ids = append(ids, childID)
+	}
+	return ids
+}
+
+func isAssignableLeaf(cat *catalog.Catalog, rt *catalog.ResolvedTerm) bool {
+	if rt == nil || rt.Status == catalog.StatusDeprecated {
+		return false
+	}
+	return len(activeChildIDs(cat, rt.ID)) == 0
+}
+
+func packChildren(cat *catalog.Catalog, parentID string) ([]PackedOption, map[string]struct{}, error) {
+	childIDs := activeChildIDs(cat, parentID)
+	var out []PackedOption
+	choiceSet := map[string]struct{}{}
+	for _, id := range childIDs {
+		rt := cat.ByID[id]
+		if rt == nil {
+			continue
+		}
+		desc := strings.TrimSpace(rt.Description)
+		if desc == "" {
+			return nil, nil, newErr("Operate", CodeEmptyDescription, fmt.Sprintf("term %q missing description", id), nil)
+		}
+		opt := PackedOption{
 			Choice:      ChoicePrefixUse + rt.ID,
 			Label:       rt.Label,
-			Description: rt.Description,
-			ParentID:    rt.Parent,
-			LeafID:      rt.ID,
-		})
+			Description: desc,
+			ParentID:    parentID,
+		}
+		if isAssignableLeaf(cat, rt) {
+			opt.LeafID = rt.ID
+		}
+		out = append(out, opt)
+		choiceSet[opt.Choice] = struct{}{}
 	}
-	out = append(out, PackedOption{
+	skip := PackedOption{
 		Choice:      ChoiceSkip,
 		Label:       "Skip",
 		Description: "No existing leaf fits; propose a new term or alias.",
-	})
-	return out, nil
+	}
+	out = append(out, skip)
+	choiceSet[ChoiceSkip] = struct{}{}
+	return out, choiceSet, nil
 }
 
-func packParentOptions(cat *catalog.Catalog) []PackedOption {
+func packAuthorParents(cat *catalog.Catalog, parentID string) []PackedOption {
+	if parentID != "" {
+		rt := cat.ByID[parentID]
+		if rt == nil {
+			return nil
+		}
+		desc := strings.TrimSpace(rt.Description)
+		if desc == "" {
+			desc = rt.Label
+		}
+		return []PackedOption{{
+			Choice:      "parent:" + rt.ID,
+			Label:       rt.Label,
+			Description: desc,
+			ParentID:    rt.ID,
+		}}
+	}
 	var out []PackedOption
-	for _, rt := range cat.TermsSorted() {
-		if rt.Leaf {
+	for _, id := range cat.Roots {
+		rt := cat.ByID[id]
+		if rt == nil || rt.Status == catalog.StatusDeprecated || rt.Leaf {
 			continue
 		}
 		desc := strings.TrimSpace(rt.Description)
@@ -198,6 +305,16 @@ func packParentOptions(cat *catalog.Catalog) []PackedOption {
 		})
 	}
 	return out
+}
+
+func requireDeadline(ctx context.Context) error {
+	if ctx == nil {
+		return newErr("Operate", CodeNoDeadline, "context required", nil)
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return newErr("Operate", CodeNoDeadline, "context must have a deadline", nil)
+	}
+	return nil
 }
 
 func packGateOptions(d DraftOut) []PackedOption {
@@ -234,7 +351,7 @@ func validateDraft(cat *catalog.Catalog, d DraftOut) error {
 			return newErr("Operate", CodeInvalidDraft, "new_leaf parent required", nil)
 		}
 		p, ok := cat.Lookup(parent)
-		if !ok || p.Leaf {
+		if !ok || isAssignableLeaf(cat, p) {
 			return newErr("Operate", CodeInvalidDraft, "new_leaf parent must be a branch", nil)
 		}
 		if strings.TrimSpace(d.Label) == "" {
@@ -250,7 +367,7 @@ func validateDraft(cat *catalog.Catalog, d DraftOut) error {
 			return newErr("Operate", CodeInvalidDraft, "alias requires leaf and alias text", nil)
 		}
 		rt, ok := cat.Lookup(leaf)
-		if !ok || !rt.Leaf {
+		if !ok || !isAssignableLeaf(cat, rt) {
 			return newErr("Operate", CodeInvalidDraft, "alias leaf must exist", nil)
 		}
 	default:
