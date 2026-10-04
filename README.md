@@ -7,13 +7,13 @@ Classification must make sense in the **game in play**: merged catalog, non-empt
 ## Module
 
 ```bash
-go get github.com/behaviorengineering/taxonomy@v0.1.0
+go get github.com/behaviorengineering/taxonomy@v0.2.0
 ```
 
 ## Packages
 
 - `pkg/catalog`: parse/merge/build YAML vocabularies, resolve leaf assignments, tree APIs
-- `pkg/harness`: `CreateHarness`, `Operate`, `Apply` with mandatory Judge + Author seats
+- `pkg/harness`: `CreateHarness`, `Operate` (n-ary tree walk), `Apply` with mandatory Judge + Author seats. Seat failures keep the cause: `CodeJudge`, `CodeAuthor`, `CodeGate` (not generic `CodeConfig`).
 
 ## Naming recommendations (host-driven)
 

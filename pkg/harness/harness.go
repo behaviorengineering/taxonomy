@@ -92,7 +92,7 @@ func (h *Harness) Operate(ctx context.Context, op Op) (Result, error) {
 
 		decideOut, err := h.judge.Decide(ctx, DecideIn{WorldContext: world, Text: text, Options: options})
 		if err != nil {
-			return Result{}, newErr("Operate", CodeConfig, "judge", err)
+			return Result{}, newErr("Operate", CodeJudge, "judge", err)
 		}
 		if math.IsNaN(decideOut.Score) || math.IsInf(decideOut.Score, 0) {
 			return Result{}, newErr("Operate", CodeInvalidScore, "judge score must be finite", nil)
@@ -141,7 +141,7 @@ func (h *Harness) authorAndGate(ctx context.Context, cat *catalog.Catalog, world
 	draftIn := DraftIn{WorldContext: world, Text: text, Parents: parents, Reason: reason}
 	draftOut, err := h.author.Draft(ctx, draftIn)
 	if err != nil {
-		return Result{}, newErr("Operate", CodeConfig, "author", err)
+		return Result{}, newErr("Operate", CodeAuthor, "author", err)
 	}
 	if err := validateDraft(cat, draftOut); err != nil {
 		return Result{}, err
@@ -155,7 +155,7 @@ func (h *Harness) authorAndGate(ctx context.Context, cat *catalog.Catalog, world
 		Options:      gateOptions,
 	})
 	if err != nil {
-		return Result{}, newErr("Operate", CodeConfig, "gate", err)
+		return Result{}, newErr("Operate", CodeGate, "gate", err)
 	}
 	if math.IsNaN(gateOut.Score) || math.IsInf(gateOut.Score, 0) {
 		return Result{}, newErr("Operate", CodeInvalidScore, "gate score must be finite", nil)

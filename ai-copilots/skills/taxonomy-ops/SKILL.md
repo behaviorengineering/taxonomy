@@ -5,10 +5,12 @@ Operate hierarchical classification catalogs and the Judge + Author harness.
 ## MUST
 
 - Build merged catalogs with `catalog.BuildCatalog` after `catalog.Merge` for overlays.
-- Pack Judge options only from the merged catalog with id, label, parent, and **non-empty** description on leaves.
+- Pack Judge options from **active children of the current catalog node** plus `skip` (tree walk). Every **active** term (branch or leaf) needs a non-empty description before `Operate`.
+- Expect **multiple** `Judge.Decide` calls per `Operate` (one per hop). Author `Parents` is the skip node (one branch) or root branches when skip at the top.
 - Require non-empty `WorldContext` from the host; the library MUST NOT invent case prose.
 - Require `context.Context` with a deadline before `harness.Operate`.
 - Inject both `Judge` and `Author` via `harness.CreateHarness`; nil seats MUST fail at create time.
+- Map walk `Decide` failures to `CodeJudge`, `Draft` failures to `CodeAuthor`, and gate `Decide` failures to `CodeGate`, wrapping the seat error. Hosts unwrap that cause for provider-specific unavailable.
 - Persist vocabulary bytes with `catalog.SaveYAML` on host-owned paths only.
 
 ## MUST NOT

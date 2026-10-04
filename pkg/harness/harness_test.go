@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,9 +13,13 @@ type fakeJudge struct {
 	choices []string
 	scores  []float64
 	call    int
+	err     error
 }
 
 func (f *fakeJudge) Decide(_ context.Context, in DecideIn) (DecideOut, error) {
+	if f.err != nil {
+		return DecideOut{}, f.err
+	}
 	i := f.call
 	f.call++
 	if i >= len(f.choices) {
@@ -49,6 +54,13 @@ func ctxWithDeadline(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 	return ctx
+}
+
+func overrideHopCap(t *testing.T, n int) {
+	t.Helper()
+	prev := hopCapForTest
+	hopCapForTest = n
+	t.Cleanup(func() { hopCapForTest = prev })
 }
 
 func TestOperate_noDeadline(t *testing.T) {
@@ -259,9 +271,30 @@ func TestOperate_collidingNewLeaf(t *testing.T) {
 	}
 }
 
+func TestOperate_judgeErrorUnwraps(t *testing.T) {
+	cause := errors.New("gateway down")
+	h, err := CreateHarness(Config{
+		Judge:  &fakeJudge{err: cause},
+		Author: &fakeAuthor{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.Operate(ctxWithDeadline(t), Op{
+		WorldContext: "brief",
+		Text:         "text",
+		Catalog:      testCatalog(t),
+	})
+	if CodeOf(err) != CodeJudge {
+		t.Fatalf("expected judge code: %v", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("expected wrapped cause: %v", err)
+	}
+}
+
 func TestOperate_hopCap(t *testing.T) {
-	hopCapForTest = 1
-	t.Cleanup(func() { hopCapForTest = 0 })
+	overrideHopCap(t, 1)
 	h, err := CreateHarness(Config{
 		Judge:  &fakeJudge{choices: []string{ChoicePrefixUse + "branch"}, scores: []float64{0.9}},
 		Author: &fakeAuthor{},
