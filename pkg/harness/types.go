@@ -70,6 +70,7 @@ type Result struct {
 	DraftAccepted bool
 	JudgeScore    float64
 	GateScore     float64
+	Path          []string
 }
 
 // Judge scores text against a closed option set.

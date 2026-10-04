@@ -18,6 +18,7 @@ const (
 	CodeInvalidScore     Code = "invalid_score"
 	CodeInvalidDraft     Code = "invalid_draft"
 	CodeConfig           Code = "config"
+	CodeHopLimit         Code = "hop_limit"
 )
 
 // Error is a typed harness failure.

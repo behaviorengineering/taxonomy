@@ -72,7 +72,10 @@ func TestOperate_emptyWorld(t *testing.T) {
 
 func TestOperate_useLeaf(t *testing.T) {
 	h, err := CreateHarness(Config{
-		Judge:  &fakeJudge{choices: []string{ChoicePrefixUse + "leaf-a"}, scores: []float64{0.9}},
+		Judge: &fakeJudge{
+			choices: []string{ChoicePrefixUse + "branch", ChoicePrefixUse + "leaf-a"},
+			scores:  []float64{0.9, 0.9},
+		},
 		Author: &fakeAuthor{},
 	})
 	if err != nil {
@@ -88,6 +91,9 @@ func TestOperate_useLeaf(t *testing.T) {
 	}
 	if len(res.Assigned) != 1 || res.Assigned[0].TermID != "leaf-a" {
 		t.Fatalf("assigned: %+v", res.Assigned)
+	}
+	if len(res.Path) != 2 || res.Path[0] != "branch" || res.Path[1] != "leaf-a" {
+		t.Fatalf("path: %v", res.Path)
 	}
 }
 
@@ -129,6 +135,49 @@ func TestOperate_skipAcceptNewLeaf(t *testing.T) {
 	if len(vocab.Terms) != 3 {
 		t.Fatalf("terms: %d", len(vocab.Terms))
 	}
+}
+
+func TestOperate_skipAtInnerNode(t *testing.T) {
+	var parents []PackedOption
+	author := &fakeAuthor{draft: DraftOut{
+		Kind:        DraftKindNewLeaf,
+		ID:          "leaf-b",
+		Parent:      "branch",
+		Label:       "Leaf B",
+		Description: "new leaf",
+	}}
+	authorHook := &authorParentsSpy{inner: author, out: &parents}
+	h, err := CreateHarness(Config{
+		Judge: &fakeJudge{
+			choices: []string{ChoicePrefixUse + "branch", ChoiceSkip, ChoiceAcceptDraft},
+			scores:  []float64{0.9, 0.9, 0.95},
+		},
+		Author: authorHook,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.Operate(ctxWithDeadline(t), Op{
+		WorldContext: "brief",
+		Text:         "text",
+		Catalog:      testCatalog(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parents) != 1 || parents[0].ParentID != "branch" {
+		t.Fatalf("parents: %+v", parents)
+	}
+}
+
+type authorParentsSpy struct {
+	inner Author
+	out   *[]PackedOption
+}
+
+func (a *authorParentsSpy) Draft(ctx context.Context, in DraftIn) (DraftOut, error) {
+	*a.out = in.Parents
+	return a.inner.Draft(ctx, in)
 }
 
 func TestOperate_skipRejectDraft(t *testing.T) {
@@ -207,5 +256,57 @@ func TestOperate_collidingNewLeaf(t *testing.T) {
 	})
 	if CodeOf(err) != CodeInvalidDraft {
 		t.Fatalf("expected invalid draft: %v", err)
+	}
+}
+
+func TestOperate_hopCap(t *testing.T) {
+	hopCapForTest = 1
+	t.Cleanup(func() { hopCapForTest = 0 })
+	h, err := CreateHarness(Config{
+		Judge:  &fakeJudge{choices: []string{ChoicePrefixUse + "branch"}, scores: []float64{0.9}},
+		Author: &fakeAuthor{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.Operate(ctxWithDeadline(t), Op{
+		WorldContext: "brief",
+		Text:         "text",
+		Catalog:      testCatalog(t),
+	})
+	if CodeOf(err) != CodeHopLimit {
+		t.Fatalf("expected hop limit: %v", err)
+	}
+}
+
+func TestOperate_mixedRootsAssignLeaf(t *testing.T) {
+	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
+		ID: "demo",
+		Terms: []catalog.Term{
+			{ID: "solo", Label: "Solo", Description: "solo leaf at root"},
+			{ID: "branch", Label: "Branch", Description: "branch desc"},
+			{ID: "leaf-a", Label: "Leaf A", Parent: "branch", Description: "leaf a desc"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := CreateHarness(Config{
+		Judge:  &fakeJudge{choices: []string{ChoicePrefixUse + "solo"}, scores: []float64{0.9}},
+		Author: &fakeAuthor{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.Operate(ctxWithDeadline(t), Op{
+		WorldContext: "brief",
+		Text:         "text",
+		Catalog:      cat,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Assigned) != 1 || res.Assigned[0].TermID != "solo" {
+		t.Fatalf("assigned: %+v", res.Assigned)
 	}
 }
