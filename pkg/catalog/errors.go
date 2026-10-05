@@ -16,6 +16,7 @@ const (
 	CodeInvalidVocab   Code = "invalid_vocab"
 	CodeParse          Code = "parse_error"
 	CodeMergeCollision Code = "merge_collision"
+	CodeInvalidPattern Code = "invalid_pattern"
 )
 
 // Error is a typed catalog failure.
