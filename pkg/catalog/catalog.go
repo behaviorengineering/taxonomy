@@ -19,6 +19,8 @@ func BuildCatalog(vocab Vocabulary) (*Catalog, error) {
 
 	byID := map[string]*ResolvedTerm{}
 	aliasToID := map[string]string{}
+	termOrder := make([]string, 0, len(vocab.Terms))
+	compiledPatterns := map[string][]compiledFieldPattern{}
 
 	for i, term := range vocab.Terms {
 		id := strings.TrimSpace(term.ID)
@@ -39,6 +41,10 @@ func BuildCatalog(vocab Vocabulary) (*Catalog, error) {
 		if status != StatusActive && status != StatusDeprecated {
 			return nil, newErr("Build", CodeInvalidVocab, fmt.Sprintf("term %s: status must be %s or %s", id, StatusActive, StatusDeprecated), nil)
 		}
+		patterns, compiled, err := compileTermPatterns(id, term.Patterns)
+		if err != nil {
+			return nil, err
+		}
 		rt := &ResolvedTerm{
 			Term: Term{
 				ID:           id,
@@ -48,9 +54,15 @@ func BuildCatalog(vocab Vocabulary) (*Catalog, error) {
 				Description:  strings.TrimSpace(term.Description),
 				Status:       status,
 				DeprecatedBy: strings.TrimSpace(term.DeprecatedBy),
+				Patterns:     patterns,
+				MapsTo:       strings.TrimSpace(term.MapsTo),
 			},
 		}
 		byID[id] = rt
+		termOrder = append(termOrder, id)
+		if len(compiled) > 0 {
+			compiledPatterns[id] = compiled
+		}
 
 		key := normID(id)
 		if other, ok := aliasToID[key]; ok && other != id {
@@ -121,10 +133,12 @@ func BuildCatalog(vocab Vocabulary) (*Catalog, error) {
 	sort.Strings(roots)
 
 	return &Catalog{
-		Vocab:     vocab,
-		ByID:      byID,
-		AliasToID: aliasToID,
-		Roots:     roots,
+		Vocab:            vocab,
+		ByID:             byID,
+		AliasToID:        aliasToID,
+		Roots:            roots,
+		termOrder:        termOrder,
+		compiledPatterns: compiledPatterns,
 	}, nil
 }
 

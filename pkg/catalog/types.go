@@ -9,6 +9,12 @@ const (
 	StatusDeprecated = "deprecated"
 )
 
+// FieldPattern is a field-scoped regex matcher on catalog terms.
+type FieldPattern struct {
+	Field string `json:"field" yaml:"field"`
+	Re    string `json:"re" yaml:"re"`
+}
+
 // Term is one node in a vocabulary tree.
 type Term struct {
 	ID          string   `json:"id" yaml:"id"`
@@ -19,6 +25,10 @@ type Term struct {
 	Status      string   `json:"status,omitempty" yaml:"status,omitempty"`
 	// DeprecatedBy points to the preferred leaf when Status is deprecated.
 	DeprecatedBy string `json:"deprecated_by,omitempty" yaml:"deprecated_by,omitempty"`
+	// Patterns match caller field values at catalog build time (compiled regex).
+	Patterns []FieldPattern `json:"patterns,omitempty" yaml:"patterns,omitempty"`
+	// MapsTo is an opaque related term id in another vocabulary; not resolved here.
+	MapsTo string `json:"maps_to,omitempty" yaml:"maps_to,omitempty"`
 }
 
 // Vocabulary is one named tag strategy.
@@ -51,6 +61,10 @@ type Catalog struct {
 	// AliasToID maps lower-case alias or id → canonical term id.
 	AliasToID map[string]string
 	Roots     []string
+	// termOrder preserves vocabulary YAML term order for MatchFields first-fit.
+	termOrder []string
+	// compiledPatterns holds compiled regexes per term id (build time only).
+	compiledPatterns map[string][]compiledFieldPattern
 }
 
 // Assignment is one leaf tagging on a content item.
