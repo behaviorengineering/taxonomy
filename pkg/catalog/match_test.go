@@ -80,3 +80,37 @@ func TestMatchFields_nilCatalog(t *testing.T) {
 		t.Fatalf("nil catalog: ok=%v err=%v", ok, err)
 	}
 }
+
+func TestMatchFields_nilFields(t *testing.T) {
+	cat, err := BuildCatalog(Vocabulary{
+		ID:    "v",
+		Terms: []Term{{ID: "t", Label: "T", Patterns: []FieldPattern{{Field: "a", Re: ".*"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ok, err := cat.MatchFields(nil)
+	if err != nil || ok {
+		t.Fatalf("nil fields: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestMatchFields_preferLeafOnDeprecatedBy(t *testing.T) {
+	cat, err := BuildCatalog(Vocabulary{
+		ID: "v",
+		Terms: []Term{
+			{
+				ID: "redirect", Label: "Redirect", DeprecatedBy: "target",
+				Patterns: []FieldPattern{{Field: "source", Re: "^hit$"}},
+			},
+			{ID: "target", Label: "Target"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, ok, err := cat.MatchFields(map[string]string{"source": "hit"})
+	if err != nil || !ok || rt.ID != "target" {
+		t.Fatalf("prefer leaf: ok=%v id=%s err=%v", ok, rt.ID, err)
+	}
+}

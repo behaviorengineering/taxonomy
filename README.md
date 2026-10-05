@@ -13,22 +13,32 @@ go get github.com/behaviorengineering/taxonomy@v0.3.0
 ## Packages
 
 - `pkg/catalog`: parse/merge/build YAML vocabularies, resolve leaf assignments, field-scoped `MatchFields`, `LearnExact` pattern learning, tree APIs
+- `pkg/harness`: `CreateHarness`, `Operate` (n-ary tree walk), `Apply` with mandatory Judge + Author seats. Seat failures keep the cause: `CodeJudge`, `CodeAuthor`, `CodeGate` (not generic `CodeConfig`).
 
 ### Field patterns (self-evolving vocabularies)
 
 ```go
 vocab, err := catalog.ParseYAML(raw)
+if err != nil { /* handle */ }
 cat, err := catalog.BuildCatalog(vocab)
+if err != nil { /* handle */ }
 rt, ok, err := cat.MatchFields(map[string]string{"source": "alerts@example.com", "title": "Digest"})
+if err != nil { /* handle */ }
 if !ok {
-    // host classifier assigns termID, then:
     vocab, err = catalog.LearnExact(vocab, "alerts-example", map[string]string{"source": "alerts@example.com"})
+    if err != nil { /* handle */ }
     raw, err = catalog.SaveYAML(vocab)
+    if err != nil { /* handle */ }
 }
 ```
 
 Terms may declare `patterns` (per-field regex, compiled at build) and optional `maps_to` (opaque related id). Hosts choose field keys and normalize values before `LearnExact`.
-- `pkg/harness`: `CreateHarness`, `Operate` (n-ary tree walk), `Apply` with mandatory Judge + Author seats. Seat failures keep the cause: `CodeJudge`, `CodeAuthor`, `CodeGate` (not generic `CodeConfig`).
+
+**MatchFields host notes:**
+
+- Term order in YAML is first-fit: put more specific terms before broad ones.
+- Id and alias matching scans **every** field value (case-folded via `normID`), not a single designated key.
+- A matching non-leaf term is returned unless `deprecated_by` redirects via `PreferLeaf`; use leaf terms or check `rt.Leaf` when you need leaves only.
 
 ## Naming recommendations (host-driven)
 

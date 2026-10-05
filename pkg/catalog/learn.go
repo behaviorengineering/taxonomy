@@ -12,7 +12,7 @@ func LearnExact(vocab Vocabulary, termID string, fields map[string]string) (Voca
 	if termID == "" {
 		return vocab, newErr("LearnExact", CodeInvalidVocab, "term id required", nil)
 	}
-	if fields == nil || len(fields) == 0 {
+	if len(fields) == 0 {
 		return vocab, nil
 	}
 

@@ -3,6 +3,8 @@ package catalog
 import "strings"
 
 // MatchFields returns the first vocabulary term that fits the field map (YAML term order).
+// A term fits when any field value matches its id or alias (normID, any key) or a compiled pattern on that key.
+// Deprecated terms are skipped. On fit, PreferLeaf follows deprecated_by; non-leaf terms are returned as-is.
 func (c *Catalog) MatchFields(fields map[string]string) (ResolvedTerm, bool, error) {
 	if c == nil || fields == nil {
 		return ResolvedTerm{}, false, nil
