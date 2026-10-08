@@ -24,6 +24,34 @@ func Apply(vocab catalog.Vocabulary, res Result) (catalog.Vocabulary, error) {
 			Description: strings.TrimSpace(d.Description),
 			Status:      catalog.StatusActive,
 		})
+	case DraftKindBreadcrumb:
+		parent := strings.TrimSpace(d.Parent)
+		kind := strings.TrimSpace(d.Alias)
+		if kind == "" && res.Essence != nil {
+			kind = strings.TrimSpace(res.Essence.Kind)
+		}
+		segs := catalog.ParseKindSegments(kind)
+		if len(segs) == 0 {
+			return catalog.Vocabulary{}, newErr("Apply", CodeInvalidDraft, "breadcrumb kind required", nil)
+		}
+		about := strings.TrimSpace(d.Description)
+		if about == "" {
+			return catalog.Vocabulary{}, newErr("Apply", CodeInvalidDraft, "breadcrumb about required", nil)
+		}
+		shape := ""
+		if res.Essence != nil {
+			shape = strings.TrimSpace(res.Essence.Shape)
+		}
+		updated, _, err := catalog.EnsurePath(out, catalog.EnsurePathInput{
+			Segments:    segs,
+			UnderParent: parent,
+			About:       about,
+			Shape:       shape,
+		})
+		if err != nil {
+			return catalog.Vocabulary{}, newErr("Apply", CodeInvalidDraft, "breadcrumb path", err)
+		}
+		return updated, nil
 	case DraftKindAlias:
 		leafID := strings.TrimSpace(d.LeafID)
 		alias := strings.TrimSpace(d.Alias)

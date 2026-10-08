@@ -1,37 +1,28 @@
 # taxonomy-ops
 
-Operate hierarchical classification catalogs and the Judge + Author harness.
+Operate hierarchical catalogs with **Walk** (Judge tree hop + Author on skip) or **Attach** (Essence, embeddings, alias / Walk reinforce / breadcrumb create).
 
-## MUST
+## Walk (default)
 
-- Build merged catalogs with `catalog.BuildCatalog` after `catalog.Merge` for overlays.
-- Pack Judge options from **active children of the current catalog node** plus `skip` (tree walk). Every **active** term (branch or leaf) needs a non-empty description before `Operate`.
-- Expect **multiple** `Judge.Decide` calls per `Operate` (one per hop). Author `Parents` is the skip node (one branch) or root branches when skip at the top.
-- Require non-empty `WorldContext` from the host; the library MUST NOT invent case prose.
-- Require `context.Context` with a deadline before `harness.Operate`.
-- Inject both `Judge` and `Author` via `harness.CreateHarness`; nil seats MUST fail at create time.
-- Map walk `Decide` failures to `CodeJudge`, `Draft` failures to `CodeAuthor`, and gate `Decide` failures to `CodeGate`, wrapping the seat error. Hosts unwrap that cause for provider-specific unavailable.
-- Persist vocabulary bytes with `catalog.SaveYAML` on host-owned paths only.
+- `CreateHarness` with `Strategy` empty or `walk`. `Embedder` and `Essencer` may be nil.
+- `Operate` requires non-empty catalog roots and term descriptions.
+- Judge sees `WorldContext` plus optional `Walk path: id > id` suffix each hop.
 
-## MUST NOT
+## Attach
 
-- Mint `cn_` ontology concept ids or Accept proposals from taxonomy operate.
-- Treat taxonomy parentage as proof or graph edges.
-- Classify against a generic dictionary or another flavour's catalog.
-- Call `Operate` without both seats or without in-world context.
+- `Strategy: attach` requires `Embedder` and `Essencer`.
+- `AttachMinCosine` default 0.80; `WalkReinforceMin` default 0.70; reinforce min must be `<=` attach min.
+- Empty catalog is allowed. Existing terms still need descriptions when present.
+- High cosine: alias draft, `DraftAccepted`, no gate Judge.
+- Fuzzy band: Walk reinforce from longest KIND prefix; Judge text is formatted essence, not raw message text.
+- Low cosine or no leaves: breadcrumb draft via `catalog.EnsurePath`; `Apply` with `DraftKindBreadcrumb`.
 
-## CORRECT
+## Host integration
 
-```text
-merged := catalog.Merge(pack, overlay)
-cat, err := catalog.BuildCatalog(merged)
-h, err := harness.CreateHarness(Config{Judge: j, Author: a})
-res, err := h.Operate(ctx, harness.Op{WorldContext: brief, Text: body, Catalog: cat})
-```
+- Provide `context.Context` with deadline on every `Operate`.
+- Persist vocabulary with `harness.Apply` when `DraftAccepted`.
+- Cosine similarity is library-side; embedder returns vectors only.
 
-## PROHIBITED
+## Release
 
-```text
-harness.Operate(context.Background(), Op{Catalog: cat})  // no deadline
-Judge options built from bare ids without descriptions
-```
+Tag library releases as `v0.x.y`. Consumers pin `go.mod` and submodule gitlink together.

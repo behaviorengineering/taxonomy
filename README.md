@@ -7,13 +7,22 @@ Classification must make sense in the **game in play**: merged catalog, non-empt
 ## Module
 
 ```bash
-go get github.com/behaviorengineering/taxonomy@v0.3.0
+go get github.com/behaviorengineering/taxonomy@v0.4.0
 ```
 
 ## Packages
 
 - `pkg/catalog`: parse/merge/build YAML vocabularies, resolve leaf assignments, field-scoped `MatchFields`, `LearnExact` pattern learning, tree APIs
-- `pkg/harness`: `CreateHarness`, `Operate` (n-ary tree walk), `Apply` with mandatory Judge + Author seats. Seat failures keep the cause: `CodeJudge`, `CodeAuthor`, `CodeGate` (not generic `CodeConfig`).
+- `pkg/harness`: `CreateHarness`, `Operate` (**Walk** tree hop or **Attach** essence/embed), `Apply` with mandatory Judge + Author seats. Attach also needs `Embedder` + `Essencer`. Seat failures keep the cause: `CodeJudge`, `CodeAuthor`, `CodeGate`, `CodeEssence`, `CodeEmbed` (not generic `CodeConfig`).
+
+### Strategies
+
+| Strategy | Seats | Catalog |
+|----------|-------|---------|
+| `walk` (default) | Judge + Author | Non-empty roots, descriptions on active terms |
+| `attach` | Judge + Author + Embedder + Essencer | May start empty; descriptions required when terms exist |
+
+Attach compares embedding cosine of essence `KIND` to each assignable leaf breadcrumb. At or above `AttachMinCosine` (default 0.80): alias without gate. Between `WalkReinforceMin` (0.70) and attach min: optional Walk reinforce. Below: create breadcrumb path with `catalog.EnsurePath`.
 
 ### Field patterns (self-evolving vocabularies)
 

@@ -22,6 +22,8 @@ const (
 	CodeJudge            Code = "judge"
 	CodeAuthor           Code = "author"
 	CodeGate             Code = "gate"
+	CodeEssence          Code = "essence"
+	CodeEmbed            Code = "embed"
 )
 
 // Error is a typed harness failure.
