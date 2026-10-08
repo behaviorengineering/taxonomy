@@ -7,12 +7,21 @@ import (
 )
 
 const (
-	ChoiceSkip        = "skip"
-	ChoicePrefixUse   = "use:"
-	ChoiceAcceptDraft = "accept_draft"
-	ChoiceReject      = "reject"
-	DraftKindNewLeaf  = "new_leaf"
-	DraftKindAlias    = "alias"
+	ChoiceSkip          = "skip"
+	ChoicePrefixUse     = "use:"
+	ChoiceAcceptDraft   = "accept_draft"
+	ChoiceReject        = "reject"
+	DraftKindNewLeaf    = "new_leaf"
+	DraftKindAlias      = "alias"
+	DraftKindBreadcrumb = "breadcrumb"
+)
+
+// Strategy selects Operate behavior.
+type Strategy string
+
+const (
+	StrategyWalk   Strategy = "walk"
+	StrategyAttach Strategy = "attach"
 )
 
 // PackedOption is one closed choice for Judge seats.
@@ -29,6 +38,7 @@ type DecideIn struct {
 	WorldContext string
 	Text         string
 	Options      []PackedOption
+	Path         []string
 }
 
 // DecideOut is output from Judge.
@@ -56,6 +66,20 @@ type DraftOut struct {
 	Alias       string
 }
 
+// EssenceIn is input for Essencer (Attach strategy).
+type EssenceIn struct {
+	WorldContext string
+	Text         string
+}
+
+// EssenceOut is structured essence from Essencer.
+type EssenceOut struct {
+	Why   [5]string
+	About string
+	Shape string
+	Kind  string
+}
+
 // Op is one Operate invocation.
 type Op struct {
 	WorldContext string
@@ -71,6 +95,14 @@ type Result struct {
 	JudgeScore    float64
 	GateScore     float64
 	Path          []string
+	Strategy      Strategy
+	Kind          string
+	About         string
+	Shape         string
+	Cosine        float64
+	CanonicalID   string
+	Reinforced    bool
+	Essence       *EssenceOut
 }
 
 // Judge scores text against a closed option set.
@@ -81,4 +113,14 @@ type Judge interface {
 // Author drafts a new leaf or alias when Judge does not assign.
 type Author interface {
 	Draft(ctx context.Context, in DraftIn) (DraftOut, error)
+}
+
+// Embedder returns embedding vectors for each input string.
+type Embedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float64, error)
+}
+
+// Essencer extracts essence fields from message text.
+type Essencer interface {
+	Essence(ctx context.Context, in EssenceIn) (EssenceOut, error)
 }

@@ -1,17 +1,21 @@
 # Agents
 
-This module is a portable taxonomy catalog and harness. Humans read [README.md](README.md).
+Portable taxonomy library for hierarchical vocabularies and the Operate harness.
 
-**Load:** [ai-copilots/skills/taxonomy-ops/SKILL.md](ai-copilots/skills/taxonomy-ops/SKILL.md)
+## Packages
 
-Wire with [ai-copilots/BOOTSTRAP.md](ai-copilots/BOOTSTRAP.md).
+- `pkg/catalog`: YAML vocabularies, `BuildCatalog`, `MatchFields`, `LearnExact`, `EnsurePath`, `Breadcrumb`
+- `pkg/harness`: `CreateHarness`, `Operate` (Walk or Attach), `Apply`
 
-```bash
-go list -m -f '{{.Dir}}' github.com/behaviorengineering/taxonomy
-```
+## Operate strategies
 
-## Package layout
+| Strategy | Required seats |
+|----------|----------------|
+| `walk` (default) | Judge, Author |
+| `attach` | Judge, Author, Embedder, Essencer |
 
-- Public API lives under `pkg/catalog` and `pkg/harness`.
-- MUST NOT import host paths, Polypus, Turno, or mint `cn_` concept ids.
-- MUST enforce in-world coherence on `harness.Operate` (deadline, WorldContext, described leaves).
+Load `ai-copilots/skills/taxonomy-ops/SKILL.md` before changing Operate, Apply, or catalog path helpers.
+
+## Release
+
+Tag minors manually (`v0.4.0` for Attach). Consumers pin `go.mod` and submodule gitlinks together.

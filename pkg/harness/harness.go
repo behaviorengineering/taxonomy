@@ -14,16 +14,28 @@ var hopCapForTest int
 
 // Config wires mandatory seats for Operate.
 type Config struct {
-	Judge         Judge
-	Author        Author
-	MinJudgeScore float64
+	Judge            Judge
+	Author           Author
+	Embedder         Embedder
+	Essencer         Essencer
+	Strategy         Strategy
+	MinJudgeScore    float64
+	AttachMinCosine  float64
+	WalkReinforceMin float64
+	Cosine           func(a, b []float64) float64
 }
 
 // Harness runs in-world taxonomy classification.
 type Harness struct {
-	judge         Judge
-	author        Author
-	minJudgeScore float64
+	judge            Judge
+	author           Author
+	embedder         Embedder
+	essencer         Essencer
+	strategy         Strategy
+	minJudgeScore    float64
+	attachMinCosine  float64
+	walkReinforceMin float64
+	cosine           func(a, b []float64) float64
 }
 
 // CreateHarness returns a harness with required Judge and Author seats.
@@ -31,14 +43,53 @@ func CreateHarness(cfg Config) (*Harness, error) {
 	if cfg.Judge == nil || cfg.Author == nil {
 		return nil, newErr("CreateHarness", CodeConfig, "Judge and Author are required", nil)
 	}
+	strategy := cfg.Strategy
+	if strategy == "" {
+		strategy = StrategyWalk
+	}
+	if strategy != StrategyWalk && strategy != StrategyAttach {
+		return nil, newErr("CreateHarness", CodeConfig, fmt.Sprintf("unknown strategy %q", strategy), nil)
+	}
+	if strategy == StrategyAttach {
+		if cfg.Embedder == nil || cfg.Essencer == nil {
+			return nil, newErr("CreateHarness", CodeConfig, "Embedder and Essencer required for attach strategy", nil)
+		}
+	}
 	min := cfg.MinJudgeScore
 	if min == 0 {
 		min = 0.5
 	}
-	if math.IsNaN(min) || math.IsInf(min, 0) {
-		return nil, newErr("CreateHarness", CodeConfig, "MinJudgeScore must be finite", nil)
+	attachMin := cfg.AttachMinCosine
+	if attachMin == 0 {
+		attachMin = 0.80
 	}
-	return &Harness{judge: cfg.Judge, author: cfg.Author, minJudgeScore: min}, nil
+	walkMin := cfg.WalkReinforceMin
+	if walkMin == 0 {
+		walkMin = 0.70
+	}
+	for _, v := range []float64{min, attachMin, walkMin} {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil, newErr("CreateHarness", CodeConfig, "thresholds must be finite", nil)
+		}
+	}
+	if walkMin > attachMin {
+		return nil, newErr("CreateHarness", CodeConfig, "WalkReinforceMin must be <= AttachMinCosine", nil)
+	}
+	cosineFn := cfg.Cosine
+	if cosineFn == nil {
+		cosineFn = CosineSimilarity
+	}
+	return &Harness{
+		judge:            cfg.Judge,
+		author:           cfg.Author,
+		embedder:         cfg.Embedder,
+		essencer:         cfg.Essencer,
+		strategy:         strategy,
+		minJudgeScore:    min,
+		attachMinCosine:  attachMin,
+		walkReinforceMin: walkMin,
+		cosine:           cosineFn,
+	}, nil
 }
 
 // Operate classifies text by walking the catalog tree (children per hop).
@@ -60,79 +111,28 @@ func (h *Harness) Operate(ctx context.Context, op Op) (Result, error) {
 	if op.Catalog == nil {
 		return Result{}, newErr("Operate", CodeNilCatalog, "Catalog required", nil)
 	}
-	if err := preflightCatalog(op.Catalog); err != nil {
-		return Result{}, err
-	}
-
-	cap := len(op.Catalog.ByID) + 1
-	if hopCapForTest > 0 {
-		cap = hopCapForTest
-	}
-	parentID := ""
-	var path []string
-	hops := 0
-	lastScore := 0.0
-
-	for {
-		hops++
-		if hops > cap {
-			return Result{}, newErr("Operate", CodeHopLimit, "hop cap exceeded", nil)
+	switch h.strategy {
+	case StrategyAttach:
+		if err := preflightAttachCatalog(op.Catalog); err != nil {
+			return Result{}, err
 		}
-		if err := ctx.Err(); err != nil {
-			return Result{}, newErr("Operate", CodeConfig, "context", err)
+		return h.attach(ctx, op)
+	default:
+		if err := preflightCatalog(op.Catalog); err != nil {
+			return Result{}, err
 		}
-
-		options, choiceSet, err := packChildren(op.Catalog, parentID)
+		res, err := h.walkFrom(ctx, op.Catalog, walkConfig{
+			judgeText: text,
+			worldBase: world,
+			parentID:  "",
+			path:      nil,
+			reinforce: false,
+		})
 		if err != nil {
 			return Result{}, err
 		}
-		if len(options) == 1 && options[0].Choice == ChoiceSkip {
-			return Result{}, newErr("Operate", CodeConfig, "no packable children", nil)
-		}
-
-		decideOut, err := h.judge.Decide(ctx, DecideIn{WorldContext: world, Text: text, Options: options})
-		if err != nil {
-			return Result{}, newErr("Operate", CodeJudge, "judge", err)
-		}
-		if math.IsNaN(decideOut.Score) || math.IsInf(decideOut.Score, 0) {
-			return Result{}, newErr("Operate", CodeInvalidScore, "judge score must be finite", nil)
-		}
-		if _, ok := choiceSet[decideOut.Choice]; !ok {
-			return Result{}, newErr("Operate", CodeUnknownChoice, fmt.Sprintf("choice %q not in packed set", decideOut.Choice), nil)
-		}
-		lastScore = decideOut.Score
-
-		if strings.HasPrefix(decideOut.Choice, ChoicePrefixUse) && decideOut.Score >= h.minJudgeScore {
-			id := strings.TrimPrefix(decideOut.Choice, ChoicePrefixUse)
-			rt, ok := op.Catalog.Lookup(id)
-			if !ok {
-				return Result{}, newErr("Operate", CodeUnknownChoice, fmt.Sprintf("term %q missing from catalog", id), nil)
-			}
-			path = append(path, rt.ID)
-			if isAssignableLeaf(op.Catalog, rt) {
-				assignRT, ok := op.Catalog.PreferLeaf(rt.ID)
-				if !ok || !isAssignableLeaf(op.Catalog, assignRT) {
-					return Result{}, newErr("Operate", CodeUnknownChoice, fmt.Sprintf("leaf %q not assignable", id), nil)
-				}
-				return Result{
-					Assigned: []catalog.Assignment{{
-						Vocab:  op.Catalog.Vocab.ID,
-						TermID: assignRT.ID,
-						Label:  assignRT.Label,
-					}},
-					JudgeScore: lastScore,
-					Path:       path,
-				}, nil
-			}
-			parentID = rt.ID
-			continue
-		}
-
-		reason := "skip"
-		if decideOut.Choice != ChoiceSkip {
-			reason = fmt.Sprintf("low_score:%.3f", decideOut.Score)
-		}
-		return h.authorAndGate(ctx, op.Catalog, world, text, parentID, reason, lastScore, path)
+		res.Strategy = StrategyWalk
+		return res, nil
 	}
 }
 
@@ -322,6 +322,9 @@ func packGateOptions(d DraftOut) []PackedOption {
 	if d.Kind == DraftKindAlias {
 		summary = fmt.Sprintf("alias %q → leaf %s", d.Alias, d.LeafID)
 	}
+	if d.Kind == DraftKindBreadcrumb {
+		summary = fmt.Sprintf("breadcrumb %q", d.Alias)
+	}
 	return []PackedOption{
 		{
 			Choice:      ChoiceAcceptDraft,
@@ -369,6 +372,16 @@ func validateDraft(cat *catalog.Catalog, d DraftOut) error {
 		rt, ok := cat.Lookup(leaf)
 		if !ok || !isAssignableLeaf(cat, rt) {
 			return newErr("Operate", CodeInvalidDraft, "alias leaf must exist", nil)
+		}
+	case DraftKindBreadcrumb:
+		if strings.TrimSpace(d.Alias) == "" {
+			return newErr("Operate", CodeInvalidDraft, "breadcrumb alias/kind required", nil)
+		}
+		if strings.TrimSpace(d.Description) == "" {
+			return newErr("Operate", CodeInvalidDraft, "breadcrumb description required", nil)
+		}
+		if len(catalog.ParseKindSegments(d.Alias)) == 0 {
+			return newErr("Operate", CodeInvalidDraft, "breadcrumb kind segments required", nil)
 		}
 	default:
 		return newErr("Operate", CodeInvalidDraft, fmt.Sprintf("unknown draft kind %q", d.Kind), nil)
