@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/behaviorengineering/taxonomy/pkg/catalog"
 )
@@ -413,6 +414,72 @@ func TestSegmentsRemainingAfterPath(t *testing.T) {
 	if len(rem) != 1 || rem[0] != "changelog" {
 		t.Fatalf("%v", rem)
 	}
+}
+
+func TestAttach_prefilledEssenceSkipsEssencer(t *testing.T) {
+	tracker := &countingEssencer{out: sampleEssence()}
+	h, err := CreateHarness(Config{
+		Judge:    &fakeJudge{choices: []string{ChoiceSkip}, scores: []float64{1}},
+		Author:   &fakeAuthor{},
+		Embedder: &fakeEmbedder{},
+		Essencer: tracker,
+		Strategy: StrategyAttach,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pre := sampleEssence()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = h.Operate(ctx, Op{
+		WorldContext: "w",
+		Text:         "msg",
+		Catalog:      emptyKindCatalog(t),
+		Essence:      &pre,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tracker.calls != 0 {
+		t.Fatalf("essencer calls=%d", tracker.calls)
+	}
+}
+
+func TestAttach_nilEssenceCallsEssencer(t *testing.T) {
+	tracker := &countingEssencer{out: sampleEssence()}
+	h, err := CreateHarness(Config{
+		Judge:    &fakeJudge{choices: []string{ChoiceSkip}, scores: []float64{1}},
+		Author:   &fakeAuthor{},
+		Embedder: &fakeEmbedder{},
+		Essencer: tracker,
+		Strategy: StrategyAttach,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = h.Operate(ctx, Op{
+		WorldContext: "w",
+		Text:         "msg",
+		Catalog:      emptyKindCatalog(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tracker.calls != 1 {
+		t.Fatalf("essencer calls=%d", tracker.calls)
+	}
+}
+
+type countingEssencer struct {
+	out   EssenceOut
+	calls int
+}
+
+func (c *countingEssencer) Essence(_ context.Context, _ EssenceIn) (EssenceOut, error) {
+	c.calls++
+	return c.out, nil
 }
 
 func TestApply_breadcrumb(t *testing.T) {

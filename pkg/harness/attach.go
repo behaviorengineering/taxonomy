@@ -14,9 +14,15 @@ import (
 var essenceKebabRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 func (h *Harness) attach(ctx context.Context, op Op) (Result, error) {
-	ess, err := h.essencer.Essence(ctx, EssenceIn{WorldContext: op.WorldContext, Text: op.Text})
-	if err != nil {
-		return Result{}, newErr("Operate", CodeEssence, "essence", err)
+	var ess EssenceOut
+	if op.Essence != nil {
+		ess = *op.Essence
+	} else {
+		got, err := h.essencer.Essence(ctx, EssenceIn{WorldContext: op.WorldContext, Text: op.Text})
+		if err != nil {
+			return Result{}, newErr("Operate", CodeEssence, "essence", err)
+		}
+		ess = got
 	}
 	if err := validateEssence(ess); err != nil {
 		return Result{}, err
