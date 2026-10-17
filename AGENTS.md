@@ -6,6 +6,7 @@ Portable taxonomy library for hierarchical vocabularies and the Operate harness.
 
 - `pkg/catalog`: YAML vocabularies, `BuildCatalog`, `MatchFields`, `LearnExact`, `EnsurePath`, `Breadcrumb`
 - `pkg/harness`: `CreateHarness`, `Operate` (Walk or Attach), `Apply`
+- `pkg/tags`: flat tag vocabulary (`CreateCatalog`, `FilterStoredShape`, `CreateCurator` with injected `Objective`, `Deny`, and `Ledger`)
 
 ## Operate strategies
 
