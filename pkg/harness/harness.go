@@ -18,6 +18,8 @@ type Config struct {
 	Author           Author
 	Embedder         Embedder
 	Essencer         Essencer
+	EssenceCache     EssenceCache
+	EssenceParallel  int
 	Strategy         Strategy
 	MinJudgeScore    float64
 	AttachMinCosine  float64
@@ -31,6 +33,8 @@ type Harness struct {
 	author           Author
 	embedder         Embedder
 	essencer         Essencer
+	essenceCache     EssenceCache
+	essenceParallel  int
 	strategy         Strategy
 	minJudgeScore    float64
 	attachMinCosine  float64
@@ -79,11 +83,17 @@ func CreateHarness(cfg Config) (*Harness, error) {
 	if cosineFn == nil {
 		cosineFn = CosineSimilarity
 	}
+	par := cfg.EssenceParallel
+	if par <= 0 {
+		par = defaultEssenceParallel
+	}
 	return &Harness{
 		judge:            cfg.Judge,
 		author:           cfg.Author,
 		embedder:         cfg.Embedder,
 		essencer:         cfg.Essencer,
+		essenceCache:     cfg.EssenceCache,
+		essenceParallel:  par,
 		strategy:         strategy,
 		minJudgeScore:    min,
 		attachMinCosine:  attachMin,

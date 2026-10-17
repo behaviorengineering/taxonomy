@@ -85,6 +85,8 @@ type Op struct {
 	WorldContext string
 	Text         string
 	Catalog      *catalog.Catalog
+	// EssenceKey is an opaque cache key; empty skips cache for this op.
+	EssenceKey string
 	// Essence optional prefilled essence; attach skips Essencer when non-nil.
 	Essence *EssenceOut
 }
