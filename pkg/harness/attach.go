@@ -14,15 +14,9 @@ import (
 var essenceKebabRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 func (h *Harness) attach(ctx context.Context, op Op) (Result, error) {
-	var ess EssenceOut
-	if op.Essence != nil {
-		ess = *op.Essence
-	} else {
-		got, err := h.essencer.Essence(ctx, EssenceIn{WorldContext: op.WorldContext, Text: op.Text})
-		if err != nil {
-			return Result{}, newErr("Operate", CodeEssence, "essence", err)
-		}
-		ess = got
+	ess, err := h.resolveEssence(ctx, op)
+	if err != nil {
+		return Result{}, err
 	}
 	if err := validateEssence(ess); err != nil {
 		return Result{}, err
@@ -270,6 +264,35 @@ func formatEssence(e EssenceOut) string {
 	b.WriteString("SHAPE: " + e.Shape + "\n")
 	b.WriteString("KIND: " + e.Kind + "\n")
 	return b.String()
+}
+
+func (h *Harness) resolveEssence(ctx context.Context, op Op) (EssenceOut, error) {
+	if op.Essence != nil {
+		return *op.Essence, nil
+	}
+	key := strings.TrimSpace(op.EssenceKey)
+	if key != "" && h.essenceCache != nil {
+		cached, hit, getErr := h.essenceCache.Get(ctx, key)
+		if getErr != nil {
+			return EssenceOut{}, newErr("Operate", CodeEssence, "cache get", getErr)
+		}
+		if hit {
+			return cached, nil
+		}
+	}
+	if h.essencer == nil {
+		return EssenceOut{}, newErr("Operate", CodeEssence, "essencer required", nil)
+	}
+	got, err := h.essencer.Essence(ctx, EssenceIn{WorldContext: op.WorldContext, Text: op.Text})
+	if err != nil {
+		return EssenceOut{}, newErr("Operate", CodeEssence, "essence", err)
+	}
+	if key != "" && h.essenceCache != nil {
+		if putErr := h.essenceCache.Put(ctx, key, got); putErr != nil {
+			return EssenceOut{}, newErr("Operate", CodeEssence, "cache put", putErr)
+		}
+	}
+	return got, nil
 }
 
 func preflightAttachCatalog(cat *catalog.Catalog) error {
