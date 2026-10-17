@@ -85,6 +85,8 @@ type Op struct {
 	WorldContext string
 	Text         string
 	Catalog      *catalog.Catalog
+	// Essence optional prefilled essence; attach skips Essencer when non-nil.
+	Essence *EssenceOut
 }
 
 // Result is the outcome of Operate.
