@@ -93,6 +93,30 @@ func WriteRegister(path string, shapes []string, seedIDs []string, deps []Deprec
 	return nil
 }
 
+// WriteRegisterFromRows writes the register file from ledger rows without listing again.
+func WriteRegisterFromRows(cat *Catalog, rows []Row) (string, error) {
+	const op = "tags.WriteRegisterFromRows"
+	if cat == nil {
+		return "", newErr(op, CodeInvalid, "nil catalog", nil)
+	}
+	shapes := shapesFromRows(rows)
+	path := cat.RegisterPath()
+	if err := WriteRegister(path, shapes, cat.SeedIDs(), cat.Deprecations()); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func shapesFromRows(rows []Row) []string {
+	shapes := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if strings.TrimSpace(r.Shape) != "" {
+			shapes = append(shapes, r.Shape)
+		}
+	}
+	return shapes
+}
+
 // RegenerateRegister lists shapes from the ledger and writes the register file.
 func RegenerateRegister(ctx context.Context, ledger Ledger, cat *Catalog) (string, error) {
 	const op = "tags.RegenerateRegister"
@@ -103,15 +127,5 @@ func RegenerateRegister(ctx context.Context, ledger Ledger, cat *Catalog) (strin
 	if err != nil {
 		return "", newErr(op, CodeFailed, "list complete", err)
 	}
-	shapes := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if strings.TrimSpace(r.Shape) != "" {
-			shapes = append(shapes, r.Shape)
-		}
-	}
-	path := cat.RegisterPath()
-	if err := WriteRegister(path, shapes, cat.SeedIDs(), cat.Deprecations()); err != nil {
-		return "", err
-	}
-	return path, nil
+	return WriteRegisterFromRows(cat, rows)
 }

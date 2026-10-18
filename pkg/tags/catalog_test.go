@@ -110,7 +110,10 @@ func TestCountTagsFromShapes_skipsStopwords(t *testing.T) {
 func TestSaveMaps_roundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dep.toml")
-	if err := SaveMaps(path, []Deprecation{{From: "promo", To: "promotional"}}, []string{"notification"}); err != nil {
+	if err := SaveMaps(path, Maps{
+		Deprecated: []Deprecation{{From: "promo", To: "promotional"}},
+		Dropped:    []string{"notification"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	deps, err := LoadDeprecations(path)
@@ -126,7 +129,7 @@ func TestSaveMaps_roundTrip(t *testing.T) {
 func TestSaveMaps_duplicateDropped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dep.toml")
-	err := SaveMaps(path, nil, []string{"notification", "notification"})
+	err := SaveMaps(path, Maps{Dropped: []string{"notification", "notification"}})
 	if err == nil {
 		t.Fatal("expected duplicate error")
 	}

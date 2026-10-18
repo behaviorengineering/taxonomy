@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const defaultDeprecationsBody = `# Tag deprecations. Each [[deprecated]] maps legacy "from" to preferred "to".
+const defaultDeprecationsBody = `# Tag deprecations. Edit [[deprecated]], [[dropped]], [[kept]], and [[skipped]] entries.
 # Example:
 # [[deprecated]]
 # from = "old-id"
@@ -14,6 +14,12 @@ const defaultDeprecationsBody = `# Tag deprecations. Each [[deprecated]] maps le
 #
 # [[dropped]]
 # id = "removed-id"
+#
+# [[kept]]
+# id = "legal-notice"
+#
+# [[skipped]]
+# id = "agenda"
 `
 
 // EnsureFiles creates deprecations when missing. Does not overwrite an existing register.

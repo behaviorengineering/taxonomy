@@ -21,6 +21,8 @@ type Catalog struct {
 	deprec   map[string]string
 	depRows  []Deprecation
 	dropped  map[string]struct{}
+	kept     map[string]struct{}
+	skipped  map[string]struct{}
 	seedIDs  []string
 	seedSet  map[string]struct{}
 	deny     map[string]struct{}
@@ -41,11 +43,7 @@ func CreateCatalog(cfg Config) (*Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	deps, err := LoadDeprecations(cfg.DeprecationsPath)
-	if err != nil {
-		return nil, err
-	}
-	dropped, err := LoadDropped(cfg.DeprecationsPath)
+	maps, err := LoadMaps(cfg.DeprecationsPath)
 	if err != nil {
 		return nil, err
 	}
@@ -56,9 +54,11 @@ func CreateCatalog(cfg Config) (*Catalog, error) {
 	deny := denySet(cfg.Deny)
 	return &Catalog{
 		active:   active,
-		deprec:   deprecationMap(deps),
-		depRows:  deps,
-		dropped:  droppedSet(dropped),
+		deprec:   deprecationMap(maps.Deprecated),
+		depRows:  maps.Deprecated,
+		dropped:  droppedSet(maps.Dropped),
+		kept:     idSet(maps.Kept),
+		skipped:  idSet(maps.Skipped),
 		seedIDs:  seedIDs,
 		seedSet:  seedIDSet(seedIDs),
 		deny:     deny,

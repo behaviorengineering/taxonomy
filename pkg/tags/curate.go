@@ -63,6 +63,7 @@ type Result struct {
 	Rewrote      int
 	Dropped      []string
 	Merged       map[string]string
+	Kept         []string
 	Skipped      []string
 	JudgeSkipped bool
 	Error        string
@@ -135,6 +136,7 @@ func (c *Curator) Catalog() *Catalog {
 }
 
 // Run applies deterministic filter rewrite, optional Judge maps, and register regeneration.
+// Operators retry a kept or skipped token by deleting its TOML row and running curation again.
 func (c *Curator) Run(parent context.Context) (Result, error) {
 	const op = "tags.Curator.Run"
 	if c == nil || c.ledger == nil || c.catalog == nil {
@@ -147,36 +149,47 @@ func (c *Curator) Run(parent context.Context) (Result, error) {
 		return Result{}, newErr(op, CodeNoDeadline, "context must have deadline", nil)
 	}
 	res := Result{Merged: map[string]string{}}
-	storeCtx, cancel := context.WithTimeout(parent, c.storeTimeout)
-	defer cancel()
-	rewrote, err := c.rewriteAll(storeCtx, c.catalog)
+	phase1Ctx, cancel1 := context.WithTimeout(parent, c.storeTimeout)
+	defer cancel1()
+	rows, err := c.ledger.ListComplete(phase1Ctx)
+	if err != nil {
+		return res, newErr(op, CodeFailed, "list complete", err)
+	}
+	rewrote, rows, err := c.rewriteRows(phase1Ctx, rows, c.catalog)
 	if err != nil {
 		return res, err
 	}
 	res.Rewrote = rewrote
-	regPath, regErr := RegenerateRegister(storeCtx, c.ledger, c.catalog)
+	left := collectLeftoversFromRows(rows, c.catalog)
+	regPath, regErr := WriteRegisterFromRows(c.catalog, rows)
 	if regErr != nil {
-		return res, newErr(op, CodeFailed, "regenerate register", regErr)
+		return res, newErr(op, CodeFailed, "write register", regErr)
 	}
 	res.RegisterPath = regPath
 	if c.judge == nil {
 		res.JudgeSkipped = true
 		return res, nil
 	}
-	left := c.collectLeftovers(storeCtx, c.catalog)
 	if len(left) == 0 {
 		return res, nil
 	}
 	judgeCtx, jevCancel := context.WithTimeout(parent, c.judgeTimeout)
 	defer jevCancel()
-	deps := slices.Clone(c.catalog.Deprecations())
-	dropped, _ := LoadDropped(c.depPath)
-	dropped = slices.Clone(dropped)
+	fileMaps, err := LoadMaps(c.depPath)
+	if err != nil {
+		return res, newErr(op, CodeFailed, "load tag maps", err)
+	}
+	deps := slices.Clone(fileMaps.Deprecated)
+	dropped := slices.Clone(fileMaps.Dropped)
+	keptIDs := slices.Clone(fileMaps.Kept)
+	skippedIDs := slices.Clone(fileMaps.Skipped)
 	depMap := deprecationMap(deps)
 	dropSet := droppedIDSet(dropped)
+	keptSet := idSet(keptIDs)
+	skippedSet := idSet(skippedIDs)
 	seeds := c.catalog.SeedIDs()
 	seedSuffix := formatSeedSuffix(seeds)
-	skipped := make([]string, 0)
+	sessionSkipped := make([]string, 0)
 	keepAfterHop1 := make([]string, 0)
 	for _, token := range left {
 		dec, err := c.judge.Decide(judgeCtx, harness.DecideIn{
@@ -187,44 +200,52 @@ func (c *Curator) Run(parent context.Context) (Result, error) {
 		if err != nil {
 			return res, newErr(op, CodeJudge, "judge hop1", err)
 		}
-		choice, score, ok := applyDecision(dec, c.minScore)
+		choice, _, ok := applyDecision(dec, c.minScore)
 		if !ok || choice == choiceDrop {
 			if ok && choice == choiceDrop {
 				if _, exists := dropSet[token]; !exists {
-					dropped = append(dropped, token)
-					dropSet[token] = struct{}{}
+					dropped, dropSet = appendUniqueID(dropped, dropSet, token)
 					res.Dropped = append(res.Dropped, token)
 				}
 			} else {
-				skipped = append(skipped, token)
+				skippedIDs, skippedSet = appendUniqueID(skippedIDs, skippedSet, token)
+				sessionSkipped = append(sessionSkipped, token)
 			}
 			continue
 		}
 		keepAfterHop1 = append(keepAfterHop1, token)
-		_ = score
 	}
 	for _, token := range keepAfterHop1 {
 		mergeChoice, mergeOK := c.mergeHop(judgeCtx, token, seeds, seedSuffix)
 		if !mergeOK {
-			skipped = append(skipped, token)
+			skippedIDs, skippedSet = appendUniqueID(skippedIDs, skippedSet, token)
+			sessionSkipped = append(sessionSkipped, token)
 			continue
 		}
 		if mergeChoice == choiceKeep {
+			keptIDs, keptSet = appendUniqueID(keptIDs, keptSet, token)
+			res.Kept = append(res.Kept, token)
 			continue
 		}
 		if _, exists := depMap[token]; exists {
 			continue
 		}
 		if !slices.Contains(seeds, mergeChoice) {
-			skipped = append(skipped, token)
+			skippedIDs, skippedSet = appendUniqueID(skippedIDs, skippedSet, token)
+			sessionSkipped = append(sessionSkipped, token)
 			continue
 		}
 		deps = append(deps, Deprecation{From: token, To: mergeChoice})
 		depMap[token] = mergeChoice
 		res.Merged[token] = mergeChoice
 	}
-	res.Skipped = skipped
-	if err := SaveMaps(c.depPath, deps, dropped); err != nil {
+	res.Skipped = sessionSkipped
+	if err := SaveMaps(c.depPath, Maps{
+		Deprecated: deps,
+		Dropped:    dropped,
+		Kept:       keptIDs,
+		Skipped:    skippedIDs,
+	}); err != nil {
 		return res, newErr(op, CodeFailed, "save tag maps", err)
 	}
 	cat, err := CreateCatalog(c.catalogCfg)
@@ -232,16 +253,20 @@ func (c *Curator) Run(parent context.Context) (Result, error) {
 		return res, newErr(op, CodeFailed, "reload catalog", err)
 	}
 	c.catalog = cat
-	storeCtx2, cancel2 := context.WithTimeout(parent, c.storeTimeout)
+	phase2Ctx, cancel2 := context.WithTimeout(parent, c.storeTimeout)
 	defer cancel2()
-	rewrote2, err := c.rewriteAll(storeCtx2, c.catalog)
+	rows2, err := c.ledger.ListComplete(phase2Ctx)
+	if err != nil {
+		return res, newErr(op, CodeFailed, "list complete after judge", err)
+	}
+	rewrote2, rows2, err := c.rewriteRows(phase2Ctx, rows2, c.catalog)
 	if err != nil {
 		return res, err
 	}
 	res.Rewrote += rewrote2
-	regPath2, regErr := RegenerateRegister(storeCtx2, c.ledger, c.catalog)
+	regPath2, regErr := WriteRegisterFromRows(c.catalog, rows2)
 	if regErr != nil {
-		return res, newErr(op, CodeFailed, "regenerate register after judge", regErr)
+		return res, newErr(op, CodeFailed, "write register after judge", regErr)
 	}
 	res.RegisterPath = regPath2
 	return res, nil
@@ -333,29 +358,25 @@ func applyDecision(dec harness.DecideOut, minScore float64) (string, float64, bo
 	return choice, dec.Score, true
 }
 
-func (c *Curator) rewriteAll(ctx context.Context, cat *Catalog) (int, error) {
-	const op = "tags.Curator.rewriteAll"
-	rows, err := c.ledger.ListComplete(ctx)
-	if err != nil {
-		return 0, newErr(op, CodeFailed, "list complete", err)
-	}
+func (c *Curator) rewriteRows(ctx context.Context, rows []Row, cat *Catalog) (int, []Row, error) {
+	const op = "tags.Curator.rewriteRows"
 	var rewrote int
-	for _, row := range rows {
-		filtered := FilterStoredShape(row.Shape, cat)
-		if filtered == strings.TrimSpace(row.Shape) {
+	for i := range rows {
+		filtered := FilterStoredShape(rows[i].Shape, cat)
+		if filtered == strings.TrimSpace(rows[i].Shape) {
 			continue
 		}
-		if err := c.ledger.Rewrite(ctx, row.ID, filtered); err != nil {
-			return rewrote, newErr(op, CodeFailed, "rewrite shape", err)
+		if err := c.ledger.Rewrite(ctx, rows[i].ID, filtered); err != nil {
+			return rewrote, rows, newErr(op, CodeFailed, "rewrite shape", err)
 		}
+		rows[i].Shape = filtered
 		rewrote++
 	}
-	return rewrote, nil
+	return rewrote, rows, nil
 }
 
-func (c *Curator) collectLeftovers(ctx context.Context, cat *Catalog) []string {
-	rows, err := c.ledger.ListComplete(ctx)
-	if err != nil {
+func collectLeftoversFromRows(rows []Row, cat *Catalog) []string {
+	if cat == nil {
 		return nil
 	}
 	depKeys := deprecationMap(cat.Deprecations())
@@ -369,6 +390,16 @@ func (c *Curator) collectLeftovers(ctx context.Context, cat *Catalog) []string {
 			}
 			if _, inDep := depKeys[tok]; inDep {
 				continue
+			}
+			if cat.kept != nil {
+				if _, kept := cat.kept[tok]; kept {
+					continue
+				}
+			}
+			if cat.skipped != nil {
+				if _, skip := cat.skipped[tok]; skip {
+					continue
+				}
 			}
 			seen[tok] = struct{}{}
 		}
