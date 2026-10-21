@@ -80,6 +80,18 @@ func EnsurePath(vocab Vocabulary, in EnsurePathInput) (Vocabulary, string, error
 			}
 		}
 		if _, ok := byID[id]; !ok {
+			if owner, ok := aliasKeyOwner(out, normID(id)); ok && owner != id {
+				spelling := id
+				for _, t := range out.Terms {
+					for _, a := range t.Aliases {
+						if normID(a) == normID(id) {
+							spelling = a
+							break
+						}
+					}
+				}
+				return vocab, "", newErr(op, CodeAliasCollision, fmt.Sprintf("alias %q used by %s and %s", spelling, owner, id), nil)
+			}
 			label := titleFromKebab(seg)
 			desc := about
 			if i < len(in.Segments)-1 {

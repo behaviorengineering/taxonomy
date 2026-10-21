@@ -33,6 +33,27 @@ func TestEnsurePath_mintOnCollision(t *testing.T) {
 	}
 }
 
+func TestEnsurePath_idCollidesWithAlias(t *testing.T) {
+	vocab := Vocabulary{
+		ID: "demo",
+		Terms: []Term{
+			{ID: "root", Label: "R", Description: "d"},
+			{ID: "other", Label: "O", Parent: "root", Description: "d", Aliases: []string{"mint-me"}},
+		},
+	}
+	_, _, err := EnsurePath(vocab, EnsurePathInput{
+		Segments:    []string{"mint-me"},
+		UnderParent: "root",
+		About:       "about text",
+	})
+	if err == nil {
+		t.Fatal("expected alias collision")
+	}
+	if CodeOf(err) != CodeAliasCollision {
+		t.Fatalf("code %v", CodeOf(err))
+	}
+}
+
 func TestParseKindSegments(t *testing.T) {
 	segs := ParseKindSegments("a > b > c")
 	if len(segs) != 3 || segs[0] != "a" {
