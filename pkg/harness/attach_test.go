@@ -50,17 +50,45 @@ func sampleEssence() EssenceOut {
 }
 
 func attachHarness(t *testing.T, judge *fakeJudge, embed *fakeEmbedder) *Harness {
-	h, err := CreateHarness(Config{
+	return attachHarnessEssence(t, judge, embed, sampleEssence(), nil)
+}
+
+func attachHarnessEssence(t *testing.T, judge *fakeJudge, embed *fakeEmbedder, ess EssenceOut, cosine func([]float64, []float64) float64) *Harness {
+	cfg := Config{
 		Judge:    judge,
 		Author:   &fakeAuthor{},
 		Embedder: embed,
-		Essencer: &fakeEssencer{out: sampleEssence()},
+		Essencer: &fakeEssencer{out: ess},
 		Strategy: StrategyAttach,
-	})
+	}
+	if cosine != nil {
+		cfg.Cosine = cosine
+	}
+	h, err := CreateHarness(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return h
+}
+
+func essenceBypassingPrefix() EssenceOut {
+	ess := sampleEssence()
+	ess.Kind = "unrelated > software-release > changelog"
+	return ess
+}
+
+func notificationLeafCatalog(t *testing.T) *catalog.Catalog {
+	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
+		ID: "k",
+		Terms: []catalog.Term{
+			{ID: "notification", Label: "N", Description: "d"},
+			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cat
 }
 
 func emptyKindCatalog(t *testing.T) *catalog.Catalog {
@@ -138,17 +166,7 @@ func TestAttach_injectedCosine(t *testing.T) {
 			{1, 0},
 		},
 	}
-	h, err := CreateHarness(Config{
-		Judge:    &fakeJudge{},
-		Author:   &fakeAuthor{},
-		Embedder: embed,
-		Essencer: &fakeEssencer{out: sampleEssence()},
-		Strategy: StrategyAttach,
-		Cosine:   func(_ []float64, _ []float64) float64 { return 1.0 },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := attachHarnessEssence(t, &fakeJudge{}, embed, sampleEssence(), func(_ []float64, _ []float64) float64 { return 1.0 })
 	res, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
 	if err != nil {
 		t.Fatal(err)
@@ -266,63 +284,23 @@ func TestCreateHarness_walkNilEmbedderOK(t *testing.T) {
 	}
 }
 
-func TestAttach_embedNonFinite(t *testing.T) {
-	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
-		ID: "k",
-		Terms: []catalog.Term{
-			{ID: "notification", Label: "N", Description: "d"},
-			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestAttach_embedErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		vecs [][]float64
+	}{
+		{name: "non_finite", vecs: [][]float64{{1, 0}, {math.NaN(), 0}}},
+		{name: "dimension_mismatch", vecs: [][]float64{{1, 0}, {1}}},
 	}
-	embed := &fakeEmbedder{vecs: [][]float64{{1, 0}, {math.NaN(), 0}}}
-	ess := sampleEssence()
-	ess.Kind = "unrelated > software-release > changelog"
-	h, err := CreateHarness(Config{
-		Judge:    &fakeJudge{},
-		Author:   &fakeAuthor{},
-		Embedder: embed,
-		Essencer: &fakeEssencer{out: ess},
-		Strategy: StrategyAttach,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
-	if CodeOf(err) != CodeEmbed {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestAttach_embedDimensionMismatch(t *testing.T) {
-	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
-		ID: "k",
-		Terms: []catalog.Term{
-			{ID: "notification", Label: "N", Description: "d"},
-			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	embed := &fakeEmbedder{vecs: [][]float64{{1, 0}, {1}}}
-	ess := sampleEssence()
-	ess.Kind = "unrelated > software-release > changelog"
-	h, err := CreateHarness(Config{
-		Judge:    &fakeJudge{},
-		Author:   &fakeAuthor{},
-		Embedder: embed,
-		Essencer: &fakeEssencer{out: ess},
-		Strategy: StrategyAttach,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
-	if CodeOf(err) != CodeEmbed {
-		t.Fatalf("got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cat := notificationLeafCatalog(t)
+			h := attachHarnessEssence(t, &fakeJudge{}, &fakeEmbedder{vecs: tc.vecs}, essenceBypassingPrefix(), nil)
+			_, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
+			if CodeOf(err) != CodeEmbed {
+				t.Fatalf("got %v", err)
+			}
+		})
 	}
 }
 
@@ -340,18 +318,7 @@ func TestAttach_termOrderTiePicksFirstLeaf(t *testing.T) {
 	}
 	v := []float64{1, 0}
 	embed := &fakeEmbedder{vecs: [][]float64{v, v, v}}
-	ess := sampleEssence()
-	ess.Kind = "unrelated > software-release > changelog"
-	h, err := CreateHarness(Config{
-		Judge:    &fakeJudge{},
-		Author:   &fakeAuthor{},
-		Embedder: embed,
-		Essencer: &fakeEssencer{out: ess},
-		Strategy: StrategyAttach,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := attachHarnessEssence(t, &fakeJudge{}, embed, essenceBypassingPrefix(), nil)
 	res, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
 	if err != nil {
 		t.Fatal(err)
@@ -468,17 +435,7 @@ func TestAttach_prefixCreatesUnderBilling(t *testing.T) {
 	ess.Kind = "notification > billing > payment-failure"
 	prVec := []float64{1, 0}
 	embed := &fakeEmbedder{vecs: [][]float64{prVec, prVec, prVec, prVec}}
-	h, err := CreateHarness(Config{
-		Judge:    &fakeJudge{},
-		Author:   &fakeAuthor{},
-		Embedder: embed,
-		Essencer: &fakeEssencer{out: ess},
-		Strategy: StrategyAttach,
-		Cosine:   func(_ []float64, _ []float64) float64 { return 1.0 },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := attachHarnessEssence(t, &fakeJudge{}, embed, ess, func(_ []float64, _ []float64) float64 { return 1.0 })
 	res, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
 	if err != nil {
 		t.Fatal(err)
@@ -518,16 +475,7 @@ func TestAttach_reusesSegmentChild(t *testing.T) {
 	embed := &fakeEmbedder{}
 	ess1 := sampleEssence()
 	ess1.Kind = "notification > ci > run-failure"
-	h, err := CreateHarness(Config{
-		Judge:    &fakeJudge{},
-		Author:   &fakeAuthor{},
-		Embedder: embed,
-		Essencer: &fakeEssencer{out: ess1},
-		Strategy: StrategyAttach,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := attachHarnessEssence(t, &fakeJudge{}, embed, ess1, nil)
 	res1, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
 	if err != nil {
 		t.Fatal(err)

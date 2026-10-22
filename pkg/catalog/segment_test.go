@@ -2,24 +2,19 @@ package catalog
 
 import "testing"
 
-func TestDeriveSegment_stripsParentPrefix(t *testing.T) {
-	got := DeriveSegment("notification", "notification-ci")
-	if got != "ci" {
-		t.Fatalf("got %q", got)
+func TestDeriveSegment(t *testing.T) {
+	cases := []struct {
+		parent, id, want string
+	}{
+		{parent: "notification", id: "notification-ci", want: "ci"},
+		{parent: "notification", id: "notification-ci-2", want: "ci-2"},
+		{parent: "notification-software-development-2", id: "ci", want: "ci"},
 	}
-}
-
-func TestDeriveSegment_keepsNumericRemainder(t *testing.T) {
-	got := DeriveSegment("notification", "notification-ci-2")
-	if got != "ci-2" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestDeriveSegment_idWithoutParentPrefix(t *testing.T) {
-	got := DeriveSegment("notification-software-development-2", "ci")
-	if got != "ci" {
-		t.Fatalf("got %q", got)
+	for _, tc := range cases {
+		got := DeriveSegment(tc.parent, tc.id)
+		if got != tc.want {
+			t.Fatalf("%s/%s: got %q want %q", tc.parent, tc.id, got, tc.want)
+		}
 	}
 }
 
