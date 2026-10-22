@@ -17,10 +17,16 @@ func Apply(vocab catalog.Vocabulary, res Result) (catalog.Vocabulary, error) {
 	out.Terms = append([]catalog.Term{}, vocab.Terms...)
 	switch strings.TrimSpace(d.Kind) {
 	case DraftKindNewLeaf:
+		newID := strings.TrimSpace(d.ID)
+		if owner, ok := catalog.AliasOwner(out, newID); ok && owner != newID {
+			return catalog.Vocabulary{}, catalog.NewApplyAliasCollision(newID, owner, newID)
+		}
+		parent := strings.TrimSpace(d.Parent)
 		out.Terms = append(out.Terms, catalog.Term{
-			ID:          strings.TrimSpace(d.ID),
+			ID:          newID,
 			Label:       strings.TrimSpace(d.Label),
-			Parent:      strings.TrimSpace(d.Parent),
+			Parent:      parent,
+			Segment:     catalog.DeriveSegment(parent, newID),
 			Description: strings.TrimSpace(d.Description),
 			Status:      catalog.StatusActive,
 		})
@@ -55,6 +61,12 @@ func Apply(vocab catalog.Vocabulary, res Result) (catalog.Vocabulary, error) {
 	case DraftKindAlias:
 		leafID := strings.TrimSpace(d.LeafID)
 		alias := strings.TrimSpace(d.Alias)
+		if alias == "" {
+			return catalog.Vocabulary{}, newErr("Apply", CodeInvalidDraft, "alias required", nil)
+		}
+		if owner, ok := catalog.AliasOwner(out, alias); ok && owner != leafID {
+			return catalog.Vocabulary{}, catalog.NewApplyAliasCollision(alias, owner, leafID)
+		}
 		updated := false
 		for i, t := range out.Terms {
 			if strings.TrimSpace(t.ID) != leafID {

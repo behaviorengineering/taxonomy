@@ -49,6 +49,16 @@ func TestMerge_collision(t *testing.T) {
 	}
 }
 
+func TestBuildCatalog_aliasCollisionUnchanged(t *testing.T) {
+	_, err := BuildCatalog(ciFailureFixture())
+	if err == nil {
+		t.Fatal("expected alias collision")
+	}
+	if CodeOf(err) != CodeAliasCollision {
+		t.Fatalf("code %v", CodeOf(err))
+	}
+}
+
 func TestParseSaveRoundTrip(t *testing.T) {
 	raw := []byte(`vocabulary:
   id: demo

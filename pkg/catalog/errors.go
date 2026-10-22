@@ -9,14 +9,15 @@ import (
 type Code string
 
 const (
-	CodeDuplicateID    Code = "duplicate_id"
-	CodeMissingParent  Code = "missing_parent"
-	CodeCycle          Code = "cycle"
-	CodeAliasCollision Code = "alias_collision"
-	CodeInvalidVocab   Code = "invalid_vocab"
-	CodeParse          Code = "parse_error"
-	CodeMergeCollision Code = "merge_collision"
-	CodeInvalidPattern Code = "invalid_pattern"
+	CodeDuplicateID      Code = "duplicate_id"
+	CodeMissingParent    Code = "missing_parent"
+	CodeCycle            Code = "cycle"
+	CodeAliasCollision   Code = "alias_collision"
+	CodeInvalidVocab     Code = "invalid_vocab"
+	CodeParse            Code = "parse_error"
+	CodeMergeCollision   Code = "merge_collision"
+	CodeInvalidPattern   Code = "invalid_pattern"
+	CodeDuplicateSegment Code = "duplicate_segment"
 )
 
 // Error is a typed catalog failure.
@@ -55,4 +56,13 @@ func CodeOf(err error) Code {
 
 func newErr(op string, code Code, msg string, err error) error {
 	return &Error{Op: op, Code: code, Msg: msg, Err: err}
+}
+
+// NewApplyAliasCollision is returned when harness.Apply would create a duplicate alias owner.
+func NewApplyAliasCollision(alias, owner, leafID string) error {
+	return &Error{
+		Op:   "Apply",
+		Code: CodeAliasCollision,
+		Msg:  fmt.Sprintf("alias %q used by %s and %s", alias, owner, leafID),
+	}
 }

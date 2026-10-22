@@ -8,7 +8,7 @@ import (
 
 var kebabRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// Breadcrumb returns term ids from root to ref joined with " > ".
+// Breadcrumb returns semantic segments from root to ref joined with " > ".
 func Breadcrumb(c *Catalog, ref string) string {
 	if c == nil {
 		return ""
@@ -16,6 +16,9 @@ func Breadcrumb(c *Catalog, ref string) string {
 	rt, ok := c.Lookup(ref)
 	if !ok || len(rt.Path) == 0 {
 		return ""
+	}
+	if len(rt.Segments) > 0 {
+		return strings.Join(rt.Segments, " > ")
 	}
 	return strings.Join(rt.Path, " > ")
 }
@@ -69,17 +72,35 @@ func EnsurePath(vocab Vocabulary, in EnsurePathInput) (Vocabulary, string, error
 		if !kebabRE.MatchString(seg) {
 			return vocab, "", newErr(op, CodeInvalidVocab, fmt.Sprintf("segment %q not kebab-case", seg), nil)
 		}
-		id := seg
-		if existing, ok := byID[id]; ok {
-			expParent := parent
-			if i == 0 && parent == "" {
-				expParent = ""
-			}
-			if strings.TrimSpace(existing.Parent) != expParent {
-				id = mintSegmentID(parent, seg, byID)
+		id, err := ResolveChildTerms(out.Terms, parent, seg)
+		if err != nil {
+			return vocab, "", err
+		}
+		if id == "" {
+			id = seg
+			if existing, ok := byID[id]; ok {
+				expParent := parent
+				if i == 0 && parent == "" {
+					expParent = ""
+				}
+				if strings.TrimSpace(existing.Parent) != expParent {
+					id = mintSegmentID(parent, seg, byID)
+				}
 			}
 		}
 		if _, ok := byID[id]; !ok {
+			if owner, ok := aliasKeyOwner(out, normID(id)); ok && owner != id {
+				spelling := id
+				for _, t := range out.Terms {
+					for _, a := range t.Aliases {
+						if normID(a) == normID(id) {
+							spelling = a
+							break
+						}
+					}
+				}
+				return vocab, "", newErr(op, CodeAliasCollision, fmt.Sprintf("alias %q used by %s and %s", spelling, owner, id), nil)
+			}
 			label := titleFromKebab(seg)
 			desc := about
 			if i < len(in.Segments)-1 {
@@ -92,6 +113,7 @@ func EnsurePath(vocab Vocabulary, in EnsurePathInput) (Vocabulary, string, error
 				ID:          id,
 				Label:       label,
 				Parent:      parent,
+				Segment:     seg,
 				Description: desc,
 				Status:      StatusActive,
 			}

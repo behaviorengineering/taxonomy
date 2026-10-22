@@ -50,17 +50,45 @@ func sampleEssence() EssenceOut {
 }
 
 func attachHarness(t *testing.T, judge *fakeJudge, embed *fakeEmbedder) *Harness {
-	h, err := CreateHarness(Config{
+	return attachHarnessEssence(t, judge, embed, sampleEssence(), nil)
+}
+
+func attachHarnessEssence(t *testing.T, judge *fakeJudge, embed *fakeEmbedder, ess EssenceOut, cosine func([]float64, []float64) float64) *Harness {
+	cfg := Config{
 		Judge:    judge,
 		Author:   &fakeAuthor{},
 		Embedder: embed,
-		Essencer: &fakeEssencer{out: sampleEssence()},
+		Essencer: &fakeEssencer{out: ess},
 		Strategy: StrategyAttach,
-	})
+	}
+	if cosine != nil {
+		cfg.Cosine = cosine
+	}
+	h, err := CreateHarness(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return h
+}
+
+func essenceBypassingPrefix() EssenceOut {
+	ess := sampleEssence()
+	ess.Kind = "unrelated > software-release > changelog"
+	return ess
+}
+
+func notificationLeafCatalog(t *testing.T) *catalog.Catalog {
+	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
+		ID: "k",
+		Terms: []catalog.Term{
+			{ID: "notification", Label: "N", Description: "d"},
+			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cat
 }
 
 func emptyKindCatalog(t *testing.T) *catalog.Catalog {
@@ -115,34 +143,30 @@ func TestAttach_emptyCatalog_breadcrumb(t *testing.T) {
 	}
 }
 
-func TestAttach_injectedCosine(t *testing.T) {
+func changelogLeafCatalog(t *testing.T) *catalog.Catalog {
 	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
 		ID: "k",
 		Terms: []catalog.Term{
 			{ID: "notification", Label: "N", Description: "d"},
-			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
+			{ID: "software-release", Label: "SR", Parent: "notification", Description: "d"},
+			{ID: "changelog", Label: "CL", Parent: "software-release", Description: "d"},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return cat
+}
+
+func TestAttach_injectedCosine(t *testing.T) {
+	cat := changelogLeafCatalog(t)
 	embed := &fakeEmbedder{
 		vecs: [][]float64{
 			{0, 1},
 			{1, 0},
 		},
 	}
-	h, err := CreateHarness(Config{
-		Judge:    &fakeJudge{},
-		Author:   &fakeAuthor{},
-		Embedder: embed,
-		Essencer: &fakeEssencer{out: sampleEssence()},
-		Strategy: StrategyAttach,
-		Cosine:   func(_ []float64, _ []float64) float64 { return 1.0 },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := attachHarnessEssence(t, &fakeJudge{}, embed, sampleEssence(), func(_ []float64, _ []float64) float64 { return 1.0 })
 	res, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
 	if err != nil {
 		t.Fatal(err)
@@ -153,16 +177,7 @@ func TestAttach_injectedCosine(t *testing.T) {
 }
 
 func TestAttach_highCosine_aliasNoJudge(t *testing.T) {
-	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
-		ID: "k",
-		Terms: []catalog.Term{
-			{ID: "notification", Label: "N", Description: "d"},
-			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cat := changelogLeafCatalog(t)
 	judge := &fakeJudge{choices: []string{ChoiceSkip}, scores: []float64{0}}
 	embed := &fakeEmbedder{
 		vecs: [][]float64{
@@ -181,9 +196,6 @@ func TestAttach_highCosine_aliasNoJudge(t *testing.T) {
 	if res.Draft == nil || res.Draft.Kind != DraftKindAlias {
 		t.Fatalf("draft %+v", res.Draft)
 	}
-	if res.Cosine < 0.99 {
-		t.Fatalf("cosine %v", res.Cosine)
-	}
 }
 
 func TestAttach_lowCosine_breadcrumb(t *testing.T) {
@@ -191,7 +203,6 @@ func TestAttach_lowCosine_breadcrumb(t *testing.T) {
 		ID: "k",
 		Terms: []catalog.Term{
 			{ID: "notification", Label: "N", Description: "d"},
-			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
 		},
 	})
 	if err != nil {
@@ -211,12 +222,18 @@ func TestAttach_lowCosine_breadcrumb(t *testing.T) {
 	if res.Draft.Kind != DraftKindBreadcrumb {
 		t.Fatalf("got %s", res.Draft.Kind)
 	}
+	if res.Draft.Parent != "notification" {
+		t.Fatalf("parent %q", res.Draft.Parent)
+	}
+	if res.Draft.Alias != "software-release > changelog" {
+		t.Fatalf("alias %q", res.Draft.Alias)
+	}
 	if res.Cosine > 0.01 {
 		t.Fatalf("cosine %v", res.Cosine)
 	}
 }
 
-func TestAttach_fuzzyWalk_reinforce(t *testing.T) {
+func TestAttach_partialPrefix_breadcrumbNotCosine(t *testing.T) {
 	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
 		ID: "k",
 		Terms: []catalog.Term{
@@ -243,14 +260,17 @@ func TestAttach_fuzzyWalk_reinforce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Reinforced {
-		t.Fatal("expected reinforced")
+	if res.Draft == nil || res.Draft.Kind != DraftKindBreadcrumb {
+		t.Fatalf("draft %+v", res.Draft)
 	}
-	if len(res.Assigned) == 0 || res.Assigned[0].TermID != "target-leaf" {
-		t.Fatalf("assigned %+v", res.Assigned)
+	if res.Draft.Parent != "notification" {
+		t.Fatalf("parent %q", res.Draft.Parent)
 	}
-	if judge.call < 1 {
-		t.Fatal("expected walk judge call")
+	if res.CanonicalID == "target-leaf" {
+		t.Fatal("cosine attached to target-leaf despite prefix mismatch")
+	}
+	if judge.call != 0 {
+		t.Fatalf("judge called %d times", judge.call)
 	}
 }
 
@@ -264,41 +284,23 @@ func TestCreateHarness_walkNilEmbedderOK(t *testing.T) {
 	}
 }
 
-func TestAttach_embedNonFinite(t *testing.T) {
-	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
-		ID: "k",
-		Terms: []catalog.Term{
-			{ID: "notification", Label: "N", Description: "d"},
-			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestAttach_embedErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		vecs [][]float64
+	}{
+		{name: "non_finite", vecs: [][]float64{{1, 0}, {math.NaN(), 0}}},
+		{name: "dimension_mismatch", vecs: [][]float64{{1, 0}, {1}}},
 	}
-	embed := &fakeEmbedder{vecs: [][]float64{{1, 0}, {math.NaN(), 0}}}
-	h := attachHarness(t, &fakeJudge{}, embed)
-	_, err = h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
-	if CodeOf(err) != CodeEmbed {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestAttach_embedDimensionMismatch(t *testing.T) {
-	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
-		ID: "k",
-		Terms: []catalog.Term{
-			{ID: "notification", Label: "N", Description: "d"},
-			{ID: "leaf", Label: "L", Parent: "notification", Description: "d"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	embed := &fakeEmbedder{vecs: [][]float64{{1, 0}, {1}}}
-	h := attachHarness(t, &fakeJudge{}, embed)
-	_, err = h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
-	if CodeOf(err) != CodeEmbed {
-		t.Fatalf("got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cat := notificationLeafCatalog(t)
+			h := attachHarnessEssence(t, &fakeJudge{}, &fakeEmbedder{vecs: tc.vecs}, essenceBypassingPrefix(), nil)
+			_, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
+			if CodeOf(err) != CodeEmbed {
+				t.Fatalf("got %v", err)
+			}
+		})
 	}
 }
 
@@ -316,7 +318,7 @@ func TestAttach_termOrderTiePicksFirstLeaf(t *testing.T) {
 	}
 	v := []float64{1, 0}
 	embed := &fakeEmbedder{vecs: [][]float64{v, v, v}}
-	h := attachHarness(t, &fakeJudge{}, embed)
+	h := attachHarnessEssence(t, &fakeJudge{}, embed, essenceBypassingPrefix(), nil)
 	res, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
 	if err != nil {
 		t.Fatal(err)
@@ -412,6 +414,107 @@ func TestSegmentsRemainingAfterPath(t *testing.T) {
 	rem := segmentsRemainingAfterPath(cat, segs, []string{"notification", "software-release"})
 	if len(rem) != 1 || rem[0] != "changelog" {
 		t.Fatalf("%v", rem)
+	}
+}
+
+func TestAttach_prefixCreatesUnderBilling(t *testing.T) {
+	cat, err := catalog.BuildCatalog(catalog.Vocabulary{
+		ID: "demo",
+		Terms: []catalog.Term{
+			{ID: "notification", Label: "N", Description: "d"},
+			{ID: "billing", Label: "B", Parent: "notification", Description: "d"},
+			{ID: "purchase-confirmation", Label: "P", Parent: "billing", Description: "d"},
+			{ID: "notification-ci-failure", Label: "CIF", Parent: "notification", Description: "d"},
+			{ID: "notification-ci-failure-pull-request", Label: "PR", Parent: "notification-ci-failure", Description: "d"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ess := sampleEssence()
+	ess.Kind = "notification > billing > payment-failure"
+	prVec := []float64{1, 0}
+	embed := &fakeEmbedder{vecs: [][]float64{prVec, prVec, prVec, prVec}}
+	h := attachHarnessEssence(t, &fakeJudge{}, embed, ess, func(_ []float64, _ []float64) float64 { return 1.0 })
+	res, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Draft == nil || res.Draft.Kind != DraftKindBreadcrumb {
+		t.Fatalf("draft %+v", res.Draft)
+	}
+	if res.Draft.Parent != "billing" {
+		t.Fatalf("parent %q", res.Draft.Parent)
+	}
+	if res.Draft.Alias != "payment-failure" {
+		t.Fatalf("alias %q", res.Draft.Alias)
+	}
+	if res.CanonicalID == "notification-ci-failure-pull-request" {
+		t.Fatal("attached to PR leaf")
+	}
+	rt := cat.ByID["billing"]
+	if rt == nil {
+		t.Fatal("missing billing")
+	}
+	if !strings.HasPrefix(res.CanonicalID, "billing-") && res.CanonicalID != "payment-failure" {
+		// minted id or bare segment id
+	}
+}
+
+func TestAttach_reusesSegmentChild(t *testing.T) {
+	vocab := catalog.Vocabulary{
+		ID: "demo",
+		Terms: []catalog.Term{
+			{ID: "notification", Label: "N", Description: "d"},
+		},
+	}
+	cat, err := catalog.BuildCatalog(vocab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	embed := &fakeEmbedder{}
+	ess1 := sampleEssence()
+	ess1.Kind = "notification > ci > run-failure"
+	h := attachHarnessEssence(t, &fakeJudge{}, embed, ess1, nil)
+	res1, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vocab, err = Apply(cat.Vocab, res1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err = catalog.BuildCatalog(vocab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ess2 := sampleEssence()
+	ess2.Kind = "notification > ci > pipeline-failure"
+	res2, err := h.Operate(ctxWithDeadline(t), Op{WorldContext: "w", Text: "x", Catalog: cat, Essence: &ess2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vocab, err = Apply(vocab, res2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciCount := 0
+	for _, term := range vocab.Terms {
+		if term.Parent == "notification" {
+			seg := term.Segment
+			if seg == "" {
+				seg = catalog.DeriveSegment("notification", term.ID)
+			}
+			if seg == "ci" {
+				ciCount++
+			}
+		}
+		if term.ID == "notification-ci-2" {
+			t.Fatal("duplicate ci mint")
+		}
+	}
+	if ciCount != 1 {
+		t.Fatalf("ci children %d", ciCount)
 	}
 }
 

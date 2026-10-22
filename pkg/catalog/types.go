@@ -29,6 +29,8 @@ type Term struct {
 	Patterns []FieldPattern `json:"patterns,omitempty" yaml:"patterns,omitempty"`
 	// MapsTo is an opaque related term id in another vocabulary; not resolved here.
 	MapsTo string `json:"maps_to,omitempty" yaml:"maps_to,omitempty"`
+	// Segment is the semantic KIND path segment; ID may be parent-prefixed for uniqueness.
+	Segment string `json:"segment,omitempty" yaml:"segment,omitempty"`
 }
 
 // Vocabulary is one named tag strategy.
@@ -50,7 +52,8 @@ type ResolvedTerm struct {
 	Term
 	Depth    int      `json:"depth"`
 	Leaf     bool     `json:"leaf"`
-	Path     []string `json:"path"` // root → self
+	Path     []string `json:"path"`               // root → self
+	Segments []string `json:"segments,omitempty"` // root → self semantic segments
 	Children []string `json:"children,omitempty"`
 }
 
