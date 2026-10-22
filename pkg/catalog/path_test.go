@@ -93,28 +93,9 @@ func TestEnsurePath_reusesMintedSegment(t *testing.T) {
 		if term.ID == "notification-ci-2" {
 			t.Fatalf("minted duplicate sibling id")
 		}
-	}
-}
-
-func TestEnsurePath_setsSegmentOnMint(t *testing.T) {
-	vocab := Vocabulary{ID: "demo", Terms: []Term{{ID: "root", Label: "R", Description: "d"}}}
-	out, leaf, err := EnsurePath(vocab, EnsurePathInput{
-		Segments:    []string{"root", "new-child"},
-		UnderParent: "",
-		About:       "about",
-		Shape:       "shape",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var seg string
-	for _, term := range out.Terms {
-		if term.ID == leaf {
-			seg = term.Segment
+		if term.ID == leaf2 && term.Segment != "run-failure" {
+			t.Fatalf("mint segment %q", term.Segment)
 		}
-	}
-	if seg != "new-child" {
-		t.Fatalf("segment %q", seg)
 	}
 }
 

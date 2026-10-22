@@ -132,14 +132,12 @@ func checkEmbedVectors(vecs [][]float64, want int) error {
 
 // segmentsRemainingAfterPath returns KIND segments not yet covered by termPath ids.
 func segmentsRemainingAfterPath(cat *catalog.Catalog, kindSegments []string, termPath []string) []string {
-	parent := ""
+	_, prefixPath, prefixConsumed := longestKindPrefix(cat, kindSegments)
 	consumed := 0
-	for i := 0; i < len(kindSegments) && i < len(termPath); i++ {
-		child := findChildSegment(cat, parent, kindSegments[i])
-		if child == "" || child != termPath[i] {
-			break
+	for i := 0; i < prefixConsumed && i < len(termPath); i++ {
+		if prefixPath[i] != termPath[i] {
+			return kindSegments[i:]
 		}
-		parent = child
 		consumed++
 	}
 	if consumed >= len(kindSegments) {
