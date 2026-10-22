@@ -52,28 +52,11 @@ func (h *Harness) attach(ctx context.Context, op Op) (Result, error) {
 	if len(leaves) == 0 {
 		return finishBreadcrumb(cat, res, ess, "", nil, 0, false)
 	}
-	texts := make([]string, 1+len(leaves))
-	texts[0] = ess.Kind
-	for i, id := range leaves {
-		texts[i+1] = catalog.Breadcrumb(cat, id)
-	}
-	vecs, err := h.embedder.Embed(ctx, texts)
+	pick, err := h.embedBestLeaf(ctx, ess.Kind, leaves, cat)
 	if err != nil {
-		return Result{}, newErr("Operate", CodeEmbed, "embed", err)
-	}
-	if err := checkEmbedVectors(vecs, len(texts)); err != nil {
 		return Result{}, err
 	}
-	query := vecs[0]
-	bestLeaf := leaves[0]
-	bestCos := h.cosine(query, vecs[1])
-	for i := 1; i < len(leaves); i++ {
-		c := h.cosine(query, vecs[i+1])
-		if c > bestCos {
-			bestCos = c
-			bestLeaf = leaves[i]
-		}
-	}
+	bestLeaf, bestCos := pick.leafID, pick.cosine
 	res.Cosine = bestCos
 	res.CanonicalID = bestLeaf
 
@@ -205,22 +188,41 @@ func assignableLeavesUnder(cat *catalog.Catalog, ancestorID string) []string {
 	return out
 }
 
-func (h *Harness) attachCosineUnder(ctx context.Context, op Op, res Result, ess EssenceOut, cat *catalog.Catalog, ancestorID string, path []string) (Result, error) {
+func (h *Harness) attachCosineUnder(ctx context.Context, _ Op, res Result, ess EssenceOut, cat *catalog.Catalog, ancestorID string, path []string) (Result, error) {
 	leaves := assignableLeavesUnder(cat, ancestorID)
 	if len(leaves) == 0 {
 		return Result{}, newErr("Operate", CodeInvalidDraft, "kind ended on non-leaf", nil)
 	}
+	pick, err := h.embedBestLeaf(ctx, ess.Kind, leaves, cat)
+	if err != nil {
+		return Result{}, err
+	}
+	bestLeaf, bestCos := pick.leafID, pick.cosine
+	res.Cosine = bestCos
+	res.Path = append([]string{}, path...)
+	if bestCos >= h.attachMinCosine {
+		return aliasAttachResult(res, cat, ess, bestLeaf, bestCos, false)
+	}
+	return finishBreadcrumb(cat, res, ess, ancestorID, path, bestCos, false)
+}
+
+type leafCosinePick struct {
+	leafID string
+	cosine float64
+}
+
+func (h *Harness) embedBestLeaf(ctx context.Context, kind string, leaves []string, cat *catalog.Catalog) (leafCosinePick, error) {
 	texts := make([]string, 1+len(leaves))
-	texts[0] = ess.Kind
+	texts[0] = kind
 	for i, id := range leaves {
 		texts[i+1] = catalog.Breadcrumb(cat, id)
 	}
 	vecs, err := h.embedder.Embed(ctx, texts)
 	if err != nil {
-		return Result{}, newErr("Operate", CodeEmbed, "embed", err)
+		return leafCosinePick{}, newErr("Operate", CodeEmbed, "embed", err)
 	}
 	if err := checkEmbedVectors(vecs, len(texts)); err != nil {
-		return Result{}, err
+		return leafCosinePick{}, err
 	}
 	query := vecs[0]
 	bestLeaf := leaves[0]
@@ -232,12 +234,7 @@ func (h *Harness) attachCosineUnder(ctx context.Context, op Op, res Result, ess 
 			bestLeaf = leaves[i]
 		}
 	}
-	res.Cosine = bestCos
-	res.Path = append([]string{}, path...)
-	if bestCos >= h.attachMinCosine {
-		return aliasAttachResult(res, cat, ess, bestLeaf, bestCos, false)
-	}
-	return finishBreadcrumb(cat, res, ess, ancestorID, path, bestCos, false)
+	return leafCosinePick{leafID: bestLeaf, cosine: bestCos}, nil
 }
 
 func aliasAttachResult(res Result, cat *catalog.Catalog, ess EssenceOut, leafID string, cos float64, reinforced bool) (Result, error) {
