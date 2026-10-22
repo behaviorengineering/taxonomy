@@ -21,10 +21,12 @@ func Apply(vocab catalog.Vocabulary, res Result) (catalog.Vocabulary, error) {
 		if owner, ok := catalog.AliasOwner(out, newID); ok && owner != newID {
 			return catalog.Vocabulary{}, catalog.NewApplyAliasCollision(newID, owner, newID)
 		}
+		parent := strings.TrimSpace(d.Parent)
 		out.Terms = append(out.Terms, catalog.Term{
 			ID:          newID,
 			Label:       strings.TrimSpace(d.Label),
-			Parent:      strings.TrimSpace(d.Parent),
+			Parent:      parent,
+			Segment:     catalog.DeriveSegment(parent, newID),
 			Description: strings.TrimSpace(d.Description),
 			Status:      catalog.StatusActive,
 		})

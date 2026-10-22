@@ -45,6 +45,10 @@ func BuildCatalog(vocab Vocabulary) (*Catalog, error) {
 		if err != nil {
 			return nil, err
 		}
+		segment := strings.TrimSpace(term.Segment)
+		if segment != "" && !kebabRE.MatchString(segment) {
+			return nil, newErr("Build", CodeInvalidVocab, fmt.Sprintf("term %s: segment %q not kebab-case", id, segment), nil)
+		}
 		rt := &ResolvedTerm{
 			Term: Term{
 				ID:           id,
@@ -56,7 +60,11 @@ func BuildCatalog(vocab Vocabulary) (*Catalog, error) {
 				DeprecatedBy: strings.TrimSpace(term.DeprecatedBy),
 				Patterns:     patterns,
 				MapsTo:       strings.TrimSpace(term.MapsTo),
+				Segment:      segment,
 			},
+		}
+		if rt.Segment == "" {
+			rt.Segment = DeriveSegment(rt.Parent, id)
 		}
 		byID[id] = rt
 		termOrder = append(termOrder, id)
@@ -102,6 +110,18 @@ func BuildCatalog(vocab Vocabulary) (*Catalog, error) {
 		}
 	}
 
+	siblingSeg := map[string]string{}
+	for id, rt := range byID {
+		if rt.Status == StatusDeprecated {
+			continue
+		}
+		segKey := rt.Parent + "\x00" + normID(rt.Segment)
+		if other, ok := siblingSeg[segKey]; ok && other != id {
+			return nil, newErr("Build", CodeDuplicateSegment, fmt.Sprintf("segment %q used by %s and %s", rt.Segment, other, id), nil)
+		}
+		siblingSeg[segKey] = id
+	}
+
 	for id := range byID {
 		path, err := ancestorsIncludingSelf(byID, id)
 		if err != nil {
@@ -109,6 +129,7 @@ func BuildCatalog(vocab Vocabulary) (*Catalog, error) {
 		}
 		rt := byID[id]
 		rt.Path = path
+		rt.Segments = segmentsAlong(byID, path)
 		rt.Depth = len(path) - 1
 	}
 

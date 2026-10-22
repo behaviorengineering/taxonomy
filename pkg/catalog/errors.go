@@ -9,14 +9,15 @@ import (
 type Code string
 
 const (
-	CodeDuplicateID    Code = "duplicate_id"
-	CodeMissingParent  Code = "missing_parent"
-	CodeCycle          Code = "cycle"
-	CodeAliasCollision Code = "alias_collision"
-	CodeInvalidVocab   Code = "invalid_vocab"
-	CodeParse          Code = "parse_error"
-	CodeMergeCollision Code = "merge_collision"
-	CodeInvalidPattern Code = "invalid_pattern"
+	CodeDuplicateID      Code = "duplicate_id"
+	CodeMissingParent    Code = "missing_parent"
+	CodeCycle            Code = "cycle"
+	CodeAliasCollision   Code = "alias_collision"
+	CodeInvalidVocab     Code = "invalid_vocab"
+	CodeParse            Code = "parse_error"
+	CodeMergeCollision   Code = "merge_collision"
+	CodeInvalidPattern   Code = "invalid_pattern"
+	CodeDuplicateSegment Code = "duplicate_segment"
 )
 
 // Error is a typed catalog failure.

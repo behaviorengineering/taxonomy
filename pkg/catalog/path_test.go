@@ -61,6 +61,63 @@ func TestParseKindSegments(t *testing.T) {
 	}
 }
 
+func TestEnsurePath_reusesMintedSegment(t *testing.T) {
+	vocab := Vocabulary{
+		ID: "demo",
+		Terms: []Term{
+			{ID: "notification", Label: "N", Segment: "notification", Description: "d"},
+			{ID: "notification-ci", Label: "CI", Parent: "notification", Segment: "ci", Description: "d"},
+		},
+	}
+	in := EnsurePathInput{
+		Segments:    []string{"notification", "ci", "run-failure"},
+		UnderParent: "",
+		About:       "about text",
+		Shape:       "shape text",
+	}
+	out1, leaf1, err := EnsurePath(vocab, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out2, leaf2, err := EnsurePath(out1, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out2.Terms) != len(out1.Terms) {
+		t.Fatalf("terms grew: %d -> %d", len(out1.Terms), len(out2.Terms))
+	}
+	if leaf1 != leaf2 {
+		t.Fatalf("leaves %q vs %q", leaf1, leaf2)
+	}
+	for _, term := range out2.Terms {
+		if term.ID == "notification-ci-2" {
+			t.Fatalf("minted duplicate sibling id")
+		}
+	}
+}
+
+func TestEnsurePath_setsSegmentOnMint(t *testing.T) {
+	vocab := Vocabulary{ID: "demo", Terms: []Term{{ID: "root", Label: "R", Description: "d"}}}
+	out, leaf, err := EnsurePath(vocab, EnsurePathInput{
+		Segments:    []string{"root", "new-child"},
+		UnderParent: "",
+		About:       "about",
+		Shape:       "shape",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seg string
+	for _, term := range out.Terms {
+		if term.ID == leaf {
+			seg = term.Segment
+		}
+	}
+	if seg != "new-child" {
+		t.Fatalf("segment %q", seg)
+	}
+}
+
 func TestBreadcrumb(t *testing.T) {
 	cat, err := BuildCatalog(Vocabulary{
 		ID: "k",

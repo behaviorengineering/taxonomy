@@ -30,6 +30,24 @@ func (h *Harness) attach(ctx context.Context, op Op) (Result, error) {
 		Essence:  &ess,
 	}
 	cat := op.Catalog
+
+	parentID, path, consumed := longestKindPrefix(cat, segments)
+	if consumed == len(segments) && consumed > 0 {
+		rt := cat.ByID[parentID]
+		if rt != nil && rt.Leaf {
+			return aliasAttachResult(res, cat, ess, parentID, 0, false)
+		}
+		if rt != nil && !rt.Leaf {
+			return h.attachCosineUnder(ctx, op, res, ess, cat, parentID, path)
+		}
+	}
+	if consumed > 0 && consumed < len(segments) {
+		remaining := segments[consumed:]
+		essRem := ess
+		essRem.Kind = strings.Join(remaining, " > ")
+		return finishBreadcrumb(cat, res, essRem, parentID, path, 0, false)
+	}
+
 	leaves := cat.AssignableLeafIDs()
 	if len(leaves) == 0 {
 		return finishBreadcrumb(cat, res, ess, "", nil, 0, false)
@@ -163,12 +181,63 @@ func longestKindPrefix(cat *catalog.Catalog, segments []string) (parentID string
 }
 
 func findChildSegment(cat *catalog.Catalog, parentID, seg string) string {
-	for _, id := range activeChildIDs(cat, parentID) {
-		if id == seg {
-			return id
-		}
+	id, ok := catalog.ResolveChild(cat, parentID, seg)
+	if ok {
+		return id
 	}
 	return ""
+}
+
+func assignableLeavesUnder(cat *catalog.Catalog, ancestorID string) []string {
+	var out []string
+	for _, id := range cat.AssignableLeafIDs() {
+		rt := cat.ByID[id]
+		if rt == nil {
+			continue
+		}
+		for _, p := range rt.Path {
+			if p == ancestorID {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (h *Harness) attachCosineUnder(ctx context.Context, op Op, res Result, ess EssenceOut, cat *catalog.Catalog, ancestorID string, path []string) (Result, error) {
+	leaves := assignableLeavesUnder(cat, ancestorID)
+	if len(leaves) == 0 {
+		return Result{}, newErr("Operate", CodeInvalidDraft, "kind ended on non-leaf", nil)
+	}
+	texts := make([]string, 1+len(leaves))
+	texts[0] = ess.Kind
+	for i, id := range leaves {
+		texts[i+1] = catalog.Breadcrumb(cat, id)
+	}
+	vecs, err := h.embedder.Embed(ctx, texts)
+	if err != nil {
+		return Result{}, newErr("Operate", CodeEmbed, "embed", err)
+	}
+	if err := checkEmbedVectors(vecs, len(texts)); err != nil {
+		return Result{}, err
+	}
+	query := vecs[0]
+	bestLeaf := leaves[0]
+	bestCos := h.cosine(query, vecs[1])
+	for i := 1; i < len(leaves); i++ {
+		c := h.cosine(query, vecs[i+1])
+		if c > bestCos {
+			bestCos = c
+			bestLeaf = leaves[i]
+		}
+	}
+	res.Cosine = bestCos
+	res.Path = append([]string{}, path...)
+	if bestCos >= h.attachMinCosine {
+		return aliasAttachResult(res, cat, ess, bestLeaf, bestCos, false)
+	}
+	return finishBreadcrumb(cat, res, ess, ancestorID, path, bestCos, false)
 }
 
 func aliasAttachResult(res Result, cat *catalog.Catalog, ess EssenceOut, leafID string, cos float64, reinforced bool) (Result, error) {
