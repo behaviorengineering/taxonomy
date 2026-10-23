@@ -57,6 +57,42 @@ func AliasOwner(vocab Vocabulary, alias string) (termID string, ok bool) {
 	return "", false
 }
 
+// TransferAlias moves normID(alias) onto winnerID and removes that key from every other term.
+func TransferAlias(vocab Vocabulary, alias, winnerID string) (Vocabulary, error) {
+	const op = "TransferAlias"
+	alias = strings.TrimSpace(alias)
+	winnerID = strings.TrimSpace(winnerID)
+	if alias == "" || winnerID == "" {
+		return vocab, newErr(op, CodeInvalidVocab, "alias and winner id required", nil)
+	}
+	out := vocab
+	out.Terms = append([]Term{}, vocab.Terms...)
+	winnerIdx := -1
+	for i, term := range out.Terms {
+		if strings.TrimSpace(term.ID) == winnerID {
+			winnerIdx = i
+			break
+		}
+	}
+	if winnerIdx < 0 {
+		return vocab, newErr(op, CodeInvalidVocab, fmt.Sprintf("winner %q not in vocabulary", winnerID), nil)
+	}
+	key := normID(alias)
+	for i := range out.Terms {
+		newAliases, _ := removeAliasNorm(out.Terms[i].Aliases, key)
+		out.Terms[i].Aliases = newAliases
+	}
+	seen := map[string]struct{}{}
+	for _, a := range out.Terms[winnerIdx].Aliases {
+		seen[normID(a)] = struct{}{}
+	}
+	if _, ok := seen[key]; !ok {
+		out.Terms[winnerIdx].Aliases = append(out.Terms[winnerIdx].Aliases, alias)
+		out.Terms[winnerIdx].Aliases = uniqueAliasesNorm(out.Terms[winnerIdx].Aliases)
+	}
+	return out, nil
+}
+
 // RepairAliases drops duplicate alias keys using the catalog winner rule.
 func RepairAliases(vocab Vocabulary) (Vocabulary, []AliasDrop, error) {
 	const op = "RepairAliases"
